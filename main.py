@@ -4,7 +4,7 @@ import win32com.shell.shell as shell
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QHBoxLayout, QTableWidget, QTableWidgetItem, QPushButton,
                            QLineEdit, QLabel, QHeaderView, QComboBox, QProgressDialog,
-                           QMessageBox)
+                           QMessageBox, QStyledItemDelegate)
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import psutil
@@ -15,6 +15,22 @@ from pathlib import Path
 import struct
 import json
 from address_dialog import AddressDialog
+
+# 添加自定义代理类
+class LockStateDelegate(QStyledItemDelegate):
+    """锁定状态下拉菜单代理"""
+    def createEditor(self, parent, option, index):
+        editor = QComboBox(parent)
+        editor.addItems(["是", "否"])
+        editor.currentTextChanged.connect(lambda: self.commitData.emit(editor))
+        return editor
+
+    def setEditorData(self, editor, index):
+        value = index.model().data(index, Qt.DisplayRole)
+        editor.setCurrentText(value)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText(), Qt.EditRole)
 
 class GameCheater(QMainWindow):
     search_completed = pyqtSignal(list)
@@ -204,6 +220,10 @@ class GameCheater(QMainWindow):
         self.result_table.verticalHeader().setVisible(False)
         self.result_table.setAlternatingRowColors(True)
         self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        # 设置锁定列的代理
+        lock_delegate = LockStateDelegate(self.result_table)
+        self.result_table.setItemDelegateForColumn(4, lock_delegate)
 
         # 允许编辑数值和锁定列
         self.result_table.itemChanged.connect(self._on_result_item_changed)
@@ -720,23 +740,57 @@ class GameCheater(QMainWindow):
     def new_address(self):
         """添加新地址到结果表格"""
         try:
-            dialog = AddressDialog(self)
+            # 获取当前选中的内存表格行
+            current_row = self.memory_table.currentRow()
+
+            # 如果有选中的行，获取该行的数据
+            if current_row >= 0:
+                addr = self.memory_table.item(current_row, 0).text()
+                value = self.memory_table.item(current_row, 3).text().split(' ')[0]  # 获取四字节值
+                value_type = self.memory_table.item(current_row, 4).text()
+
+                # 创建并显示添加地址对话框，传入地址和值
+                dialog = AddressDialog(self, address=addr, value=value)
+
+                # 设置数据类型
+                if "浮点" in value_type:
+                    dialog.type_float.setChecked(True)
+                elif "字符" in value_type:
+                    dialog.type_string.setChecked(True)
+                else:
+                    dialog.type_int.setChecked(True)
+
+                # 设置长度
+                if "单字节" in value_type:
+                    dialog.length_combo.setCurrentText("单字节")
+                elif "双字节" in value_type:
+                    dialog.length_combo.setCurrentText("双字节")
+                else:
+                    dialog.length_combo.setCurrentText("四字节")
+            else:
+                # 如果没有选中行，则打开空白对话框
+                dialog = AddressDialog(self)
+
+            # 显示对话框
             if dialog.exec_():
                 values = dialog.get_values()
                 try:
                     addr = int(values['address'], 16)
-                    self._add_to_result_table(
+                    if self._add_to_result_table(
                         addr=addr,
                         desc=values['name'],
                         value_type=values['data_type'],
                         initial_value=values['value'],
                         auto_lock=values['auto_lock']
-                    )
-                    self.statusBar().showMessage(f"已添加地址 {hex(addr)} 到修改列表")
+                    ):
+                        self.statusBar().showMessage(f"已添加地址 {hex(addr)} 到修改列表")
+                    else:
+                        self.statusBar().showMessage("添加地址失败")
                 except ValueError:
                     self.statusBar().showMessage('请输入有效的地址')
         except Exception as e:
             self.logger.error(f"添加地址失败: {str(e)}")
+            self.logger.debug(traceback.format_exc())
             self.statusBar().showMessage("添加地址失败")
 
     def delete_address(self):
@@ -867,6 +921,8 @@ class GameCheater(QMainWindow):
                 # 让数值列和锁定列可编辑
                 if col not in [2, 4]:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                elif col == 4:  # 锁定列特殊处理
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
                 self.result_table.setItem(row, col, item)
 
             # 如果设置了自动锁定，添加到锁定列表
