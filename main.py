@@ -223,54 +223,76 @@ class GameCheater(QMainWindow):
             # 获取必要的值，并进行空值检查
             addr_item = self.result_table.item(row, 1)
             type_item = self.result_table.item(row, 3)
+            value_item = self.result_table.item(row, 2)
 
-            if not addr_item or not type_item:
+            if not all([addr_item, type_item, value_item]):
                 self.logger.warning("表格数据不完整")
                 return
 
             addr = int(addr_item.text(), 16)  # 获取地址
             value_type = type_item.text()     # 获取类型
+            value_text = value_item.text()    # 获取值
 
             if col == 2:  # 数值列
                 try:
-                    # 根据类型转换值
+                    # 根据类型转换值并写入内存
                     if value_type == '整数':
-                        value = int(item.text())
+                        value = int(value_text)
+                        # 确保使用4字节，支持负数
+                        if value < 0:
+                            # 负数需要特殊处理，使用补码
+                            value = value & 0xFFFFFFFF
                         buffer = value.to_bytes(4, 'little')
                     elif value_type == '浮点':
-                        value = float(item.text())
+                        value = float(value_text)
                         buffer = struct.pack('<f', value)
                     else:  # 字符串
-                        value = item.text()
+                        value = value_text
                         buffer = value.encode('utf-8')
 
-                    # 写入内存
-                    if self.memory_reader.write_memory(addr, buffer):
-                        self.logger.info(f"成功写入地址 {hex(addr)}: {value}")
-                        self.statusBar().showMessage(f"成功修改值: {value}")
-                    else:
-                        self.logger.error(f"写入地址 {hex(addr)} 失败")
-                        self.statusBar().showMessage("写入内存失败")
+                    # 写入内存前检查进程是否还在运行
+                    if not self.memory_reader.process_handle:
+                        raise Exception("进程未附加或已退出")
 
-                except ValueError:
-                    self.logger.error("输入的值格式无效")
+                    # 写入内存并验证
+                    if self.memory_reader.write_memory(addr, buffer):
+                        # 读取回写入的值进行验证
+                        verify_value = self.memory_reader.read_memory(addr, len(buffer))
+                        if verify_value == buffer:
+                            self.logger.info(f"成功写入并验证地址 {hex(addr)}: {value}")
+                            self.statusBar().showMessage(f"成功修改值: {value}")
+
+                            # 如果该地址被锁定，更新锁定值
+                            if addr in self.locked_addresses:
+                                self.locked_addresses[addr] = value
+                        else:
+                            raise Exception("写入验证失败")
+                    else:
+                        raise Exception("写入内存失败")
+
+                except ValueError as e:
+                    self.logger.error(f"输入的值格式无效: {value_text} - {str(e)}")
                     self.statusBar().showMessage("请输入有效的数值")
+                    # 恢复原值
+                    item.setText(str(self.locked_addresses.get(addr, value_text)))
+                except Exception as e:
+                    self.logger.error(f"写入内存时出错: {str(e)}")
+                    self.statusBar().showMessage("写入内存失败")
+                    # 恢复原值
+                    item.setText(str(self.locked_addresses.get(addr, value_text)))
 
             elif col == 4:  # 锁定列
                 is_locked = item.text().lower() == "是"
                 if is_locked:
                     # 获取当前值并添加到锁定列表
                     try:
-                        value_item = self.result_table.item(row, 2)
-                        if not value_item:
-                            raise ValueError("无效的值")
-
                         if value_type == '整数':
-                            value = int(value_item.text())
-                            self.locked_addresses[addr] = value
+                            value = int(value_text)
                         elif value_type == '浮点':
-                            value = float(value_item.text())
-                            self.locked_addresses[addr] = value
+                            value = float(value_text)
+                        else:
+                            value = value_text
+                        self.locked_addresses[addr] = value
                     except ValueError:
                         self.logger.error("无法锁定：无效的值")
                         item.setText("否")
@@ -286,10 +308,111 @@ class GameCheater(QMainWindow):
             self.logger.debug(traceback.format_exc())
 
     def _setup_timer(self):
-        """设置定时器用于更新锁定的值"""
+        """设置定时器用于更新锁定的值和刷新显示"""
         self.lock_timer = QTimer()
-        self.lock_timer.timeout.connect(self.update_locked_values)
+        self.lock_timer.timeout.connect(self._update_timer_event)
         self.lock_timer.start(100)  # 每100ms更新一次
+
+    def _update_timer_event(self):
+        """定时器事件：更新锁定值和刷新显示"""
+        try:
+            # 更新锁定的值
+            self._update_locked_values()
+
+            # 刷新内存表格显示
+            self._refresh_memory_table()
+
+            # 刷新结果表格显示
+            self._refresh_result_table()
+
+        except Exception as e:
+            self.logger.error(f"定时更新失败: {str(e)}")
+
+    def _refresh_memory_table(self):
+        """刷新内存表格的值"""
+        try:
+            for row in range(self.memory_table.rowCount()):
+                addr_item = self.memory_table.item(row, 0)
+                if not addr_item:
+                    continue
+
+                addr = int(addr_item.text(), 16)
+                value = self.memory_reader.read_memory(addr, 4)
+
+                if value:
+                    # 更新单字节值
+                    self.memory_table.item(row, 1).setText(str(value[0]))
+
+                    # 更新双字节值
+                    word_val = int.from_bytes(value[:2], 'little')
+                    self.memory_table.item(row, 2).setText(str(word_val))
+
+                    # 更新四字节值（整数和浮点数）
+                    dword_val = int.from_bytes(value, 'little')
+                    float_val = struct.unpack('<f', value)[0]
+                    self.memory_table.item(row, 3).setText(f"{dword_val} ({float_val:.2f})")
+
+        except Exception as e:
+            self.logger.error(f"刷新内存表格失败: {str(e)}")
+
+    def _refresh_result_table(self):
+        """刷新结果表格的值"""
+        try:
+            for row in range(self.result_table.rowCount()):
+                addr_item = self.result_table.item(row, 1)
+                type_item = self.result_table.item(row, 3)
+                if not addr_item or not type_item:
+                    continue
+
+                addr = int(addr_item.text(), 16)
+                value_type = type_item.text()
+
+                # 读取内存值
+                value = self.memory_reader.read_memory(addr, 4)
+                if not value:
+                    continue
+
+                # 根据类型转换值
+                try:
+                    if value_type == '整数':
+                        current_value = str(int.from_bytes(value, 'little', signed=True))
+                    elif value_type == '浮点':
+                        current_value = f"{struct.unpack('<f', value)[0]:.2f}"
+                    else:  # 字符串
+                        current_value = value.decode('utf-8', errors='ignore')
+
+                    # 更新显示的值（不触发 itemChanged 信号）
+                    value_item = self.result_table.item(row, 2)
+                    if value_item and value_item.text() != current_value:
+                        self.result_table.blockSignals(True)
+                        value_item.setText(current_value)
+                        self.result_table.blockSignals(False)
+
+                except Exception as e:
+                    self.logger.debug(f"转换值失败: {str(e)}")
+
+        except Exception as e:
+            self.logger.error(f"刷新结果表格失败: {str(e)}")
+
+    def _update_locked_values(self):
+        """更新锁定的值"""
+        try:
+            for addr, value in self.locked_addresses.items():
+                try:
+                    if isinstance(value, int):
+                        buffer = value.to_bytes(4, 'little', signed=True)
+                    elif isinstance(value, float):
+                        buffer = struct.pack('<f', value)
+                    else:
+                        buffer = value.encode('utf-8')
+
+                    if not self.memory_reader.write_memory(addr, buffer):
+                        self.logger.debug(f"无法写入锁定地址: {hex(addr)}")
+                except Exception as e:
+                    self.logger.debug(f"更新锁定值失败: {hex(addr)} - {str(e)}")
+
+        except Exception as e:
+            self.logger.error(f"更新锁定值时出错: {str(e)}")
 
     def _load_config(self):
         """加载配置文件"""
@@ -594,15 +717,6 @@ class GameCheater(QMainWindow):
         # 更新状态栏
         self.statusBar().showMessage(msg)
 
-    def update_locked_values(self):
-        """更新锁定的值"""
-        try:
-            for addr, value in self.locked_addresses.items():
-                if not self.memory_reader.write_memory(addr, value.to_bytes(4, 'little')):
-                    self.logger.warning(f"无法写入地址: {hex(addr)}")
-        except Exception as e:
-            self.logger.error(f"更新锁定值时出错: {str(e)}")
-
     def new_address(self):
         """添加新地址到结果表格"""
         try:
@@ -695,42 +809,85 @@ class GameCheater(QMainWindow):
 
     def _add_to_result_table(self, addr, desc, value_type, initial_value, auto_lock=False):
         """添加一行到结果表格"""
-        row = self.result_table.rowCount()
-        self.result_table.insertRow(row)
-
-        # 转换数据类型显示
-        display_type = {
-            'int': '整数',
-            'float': '浮点',
-            'string': '字符串'
-        }.get(value_type, '整数')  # 默认为整数
-
-        items = [
-            (0, desc),                # 名称
-            (1, hex(addr)),          # 地址
-            (2, str(initial_value)), # 当前值
-            (3, display_type),       # 类型
-            (4, "是" if auto_lock else "否"),  # 锁定状态
-            (5, desc)                # 说明
-        ]
-
-        # 先创建所有项目，再设置到表格中
-        for col, value in items:
-            item = QTableWidgetItem(str(value))
-            # 让数值列和锁定列可编辑
-            if col not in [2, 4]:
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            self.result_table.setItem(row, col, item)
-
-        # 如果设置了自动锁定，添加到锁定列表
-        if auto_lock:
+        try:
+            # 先尝试写入内存
             try:
+                # 根据类型转换值并写入内存
                 if value_type == 'int':
-                    self.locked_addresses[addr] = int(initial_value)
+                    value = int(initial_value)
+                    if value < 0:
+                        value = value & 0xFFFFFFFF
+                    buffer = value.to_bytes(4, 'little')
                 elif value_type == 'float':
-                    self.locked_addresses[addr] = float(initial_value)
-            except ValueError:
-                self.logger.warning(f"无法锁定值: {initial_value}")
+                    value = float(initial_value)
+                    buffer = struct.pack('<f', value)
+                else:  # 字符串
+                    value = str(initial_value)
+                    buffer = value.encode('utf-8')
+
+                # 写入内存并验证
+                if not self.memory_reader.write_memory(addr, buffer):
+                    raise Exception("写入内存失败")
+
+                # 读取回写入的值进行验证
+                verify_value = self.memory_reader.read_memory(addr, len(buffer))
+                if verify_value != buffer:
+                    raise Exception("写入验证失败")
+
+                self.logger.info(f"成功写入并验证地址 {hex(addr)}: {value}")
+
+            except Exception as e:
+                self.logger.error(f"初始写入失败: {str(e)}")
+                # 写入失败时仍然添加到表格，但不设置锁定
+                auto_lock = False
+
+            # 添加到结果表格
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+
+            # 转换数据类型显示
+            display_type = {
+                'int': '整数',
+                'float': '浮点',
+                'string': '字符串'
+            }.get(value_type, '整数')  # 默认为整数
+
+            items = [
+                (0, desc),                # 名称
+                (1, hex(addr)),          # 地址
+                (2, str(initial_value)), # 当前值
+                (3, display_type),       # 类型
+                (4, "是" if auto_lock else "否"),  # 锁定状态
+                (5, desc)                # 说明
+            ]
+
+            # 先创建所有项目，再设置到表格中
+            for col, value in items:
+                item = QTableWidgetItem(str(value))
+                # 让数值列和锁定列可编辑
+                if col not in [2, 4]:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.result_table.setItem(row, col, item)
+
+            # 如果设置了自动锁定，添加到锁定列表
+            if auto_lock:
+                try:
+                    if value_type == 'int':
+                        self.locked_addresses[addr] = int(initial_value)
+                    elif value_type == 'float':
+                        self.locked_addresses[addr] = float(initial_value)
+                    else:
+                        self.locked_addresses[addr] = str(initial_value)
+                except ValueError:
+                    self.logger.warning(f"无法锁定值: {initial_value}")
+                    # 设置锁定状态为否
+                    self.result_table.item(row, 4).setText("否")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"添加到结果表格失败: {str(e)}")
+            return False
 
 class SearchThread(QThread):
     """搜索线程"""
