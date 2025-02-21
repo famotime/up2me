@@ -34,7 +34,7 @@ class GameCheater(QMainWindow):
         self.config_file = Path('config.json')
         self.config = self._load_config()
 
-        self.setWindowTitle('Unity游戏修改器')
+        self.setWindowTitle('"由我"游戏修改器')
         self.setGeometry(100, 100, 800, 600)
 
         # 添加状态栏初始化
@@ -48,6 +48,9 @@ class GameCheater(QMainWindow):
 
         # 初始化进程列表
         self.refresh_process_list()
+
+        # 添加双击事件处理
+        self.memory_table.cellDoubleClicked.connect(self._on_memory_table_double_clicked)
 
     def _setup_ui(self):
         """设置UI布局"""
@@ -109,29 +112,65 @@ class GameCheater(QMainWindow):
 
         # 下方按钮区
         button_layout = QHBoxLayout()
-        buttons = {
-            '首次扫描': self.first_scan,
-            '下一次扫描': self.next_scan,
-            '新建': self.new_address,
-            '删除': self.delete_address,
-            '清空': self.clear_results
-        }
 
-        for text, callback in buttons.items():
-            btn = QPushButton(text)
-            btn.clicked.connect(callback)
-            button_layout.addWidget(btn)
+        # 搜索按钮组
+        search_buttons = QHBoxLayout()
+        search_buttons.addWidget(self._create_button('首次扫描', self.first_scan))
+        search_buttons.addWidget(self._create_button('下一次扫描', self.next_scan))
+        button_layout.addLayout(search_buttons)
+
+        button_layout.addStretch()  # 添加弹性空间
+
+        # 结果操作按钮组
+        result_buttons = QHBoxLayout()
+        result_buttons.addWidget(self._create_button('添加', self.new_address))
+        result_buttons.addWidget(self._create_button('删除', self.delete_address))
+        result_buttons.addWidget(self._create_button('清空', self.clear_results))
+        button_layout.addLayout(result_buttons)
 
         search_layout.addLayout(top_layout)
         search_layout.addLayout(button_layout)
         return search_layout
+
+    def _create_button(self, text, callback):
+        """创建按钮的辅助方法"""
+        btn = QPushButton(text)
+        btn.clicked.connect(callback)
+        return btn
 
     def _create_memory_table(self):
         """创建内存表格"""
         self.memory_table = QTableWidget()
         self.memory_table.setColumnCount(5)
         self.memory_table.setHorizontalHeaderLabels(['地址', '单字节', '双字节', '四字节', '类型'])
-        self.memory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        # 设置表格样式
+        self.memory_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                gridline-color: #d8d8d8;
+                selection-background-color: #0078d7;
+                selection-color: white;
+            }
+            QTableWidget::item {
+                padding: 5px;
+            }
+            QHeaderView::section {
+                background-color: #f0f0f0;
+                padding: 5px;
+                border: none;
+                border-right: 1px solid #d8d8d8;
+                border-bottom: 1px solid #d8d8d8;
+            }
+        """)
+
+        # 优化表格外观
+        self.memory_table.horizontalHeader().setStretchLastSection(True)
+        self.memory_table.verticalHeader().setVisible(False)
+        self.memory_table.setAlternatingRowColors(True)
+        self.memory_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.memory_table.setEditTriggers(QTableWidget.NoEditTriggers)
+
         return self.memory_table
 
     def _create_result_table(self):
@@ -139,7 +178,32 @@ class GameCheater(QMainWindow):
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(6)
         self.result_table.setHorizontalHeaderLabels(['名称', '地址', '数值', '类型', '锁定', '说明'])
-        self.result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        # 设置表格样式
+        self.result_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                gridline-color: #d8d8d8;
+                selection-background-color: #0078d7;
+                selection-color: white;
+            }
+            QTableWidget::item {
+                padding: 5px;
+            }
+            QHeaderView::section {
+                background-color: #f0f0f0;
+                padding: 5px;
+                border: none;
+                border-right: 1px solid #d8d8d8;
+                border-bottom: 1px solid #d8d8d8;
+            }
+        """)
+
+        # 优化表格外观
+        self.result_table.horizontalHeader().setStretchLastSection(True)
+        self.result_table.verticalHeader().setVisible(False)
+        self.result_table.setAlternatingRowColors(True)
+        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
 
         # 允许编辑数值和锁定列
         self.result_table.itemChanged.connect(self._on_result_item_changed)
@@ -156,21 +220,29 @@ class GameCheater(QMainWindow):
             if col not in [2, 4]:
                 return
 
-            addr = int(self.result_table.item(row, 1).text(), 16)  # 获取地址
-            value_type = self.result_table.item(row, 3).text()     # 获取类型
+            # 获取必要的值，并进行空值检查
+            addr_item = self.result_table.item(row, 1)
+            type_item = self.result_table.item(row, 3)
+
+            if not addr_item or not type_item:
+                self.logger.warning("表格数据不完整")
+                return
+
+            addr = int(addr_item.text(), 16)  # 获取地址
+            value_type = type_item.text()     # 获取类型
 
             if col == 2:  # 数值列
                 try:
                     # 根据类型转换值
-                    if value_type == '整数(4字节)':
+                    if value_type == '整数':
                         value = int(item.text())
                         buffer = value.to_bytes(4, 'little')
-                    elif value_type == '浮点数':
+                    elif value_type == '浮点':
                         value = float(item.text())
                         buffer = struct.pack('<f', value)
-                    else:  # 双精度
-                        value = float(item.text())
-                        buffer = struct.pack('<d', value)
+                    else:  # 字符串
+                        value = item.text()
+                        buffer = value.encode('utf-8')
 
                     # 写入内存
                     if self.memory_reader.write_memory(addr, buffer):
@@ -189,10 +261,16 @@ class GameCheater(QMainWindow):
                 if is_locked:
                     # 获取当前值并添加到锁定列表
                     try:
-                        if value_type == '整数(4字节)':
-                            value = int(self.result_table.item(row, 2).text())
+                        value_item = self.result_table.item(row, 2)
+                        if not value_item:
+                            raise ValueError("无效的值")
+
+                        if value_type == '整数':
+                            value = int(value_item.text())
                             self.locked_addresses[addr] = value
-                        # 暂时不支持浮点数锁定
+                        elif value_type == '浮点':
+                            value = float(value_item.text())
+                            self.locked_addresses[addr] = value
                     except ValueError:
                         self.logger.error("无法锁定：无效的值")
                         item.setText("否")
@@ -526,85 +604,133 @@ class GameCheater(QMainWindow):
             self.logger.error(f"更新锁定值时出错: {str(e)}")
 
     def new_address(self):
-        """添加新地址"""
+        """添加新地址到结果表格"""
         try:
-            # 如果有选中的内存表格行，使用该地址
-            current_row = self.memory_table.currentRow()
-            if current_row >= 0:
-                default_addr = self.memory_table.item(current_row, 0).text()
-                default_type = self.memory_table.item(current_row, 4).text()
-            else:
-                default_addr = ""
-                default_type = "整数(4字节)"
-
             dialog = AddressDialog(self)
-            dialog.addr_input.setText(default_addr)
-
-            # 设置默认类型
-            index = dialog.type_combo.findText(default_type)
-            if index >= 0:
-                dialog.type_combo.setCurrentIndex(index)
-
             if dialog.exec_():
-                addr = int(dialog.addr_input.text(), 16)
-                desc = dialog.desc_input.text()
-                value_type = dialog.type_combo.currentText()
-
-                # 读取当前值
-                if value_type == '整数(4字节)':
-                    size = 4
-                    value = self.memory_reader.read_memory(addr, size)
-                    if value:
-                        current_value = int.from_bytes(value, 'little')
-                else:  # 浮点数
-                    size = 4 if value_type == '浮点数' else 8
-                    value = self.memory_reader.read_memory(addr, size)
-                    if value:
-                        current_value = struct.unpack('<f' if size == 4 else '<d', value)[0]
-
-                # 添加到结果表格
-                row = self.result_table.rowCount()
-                self.result_table.insertRow(row)
-
-                items = [
-                    (0, desc or f"地址 {hex(addr)}"),  # 名称
-                    (1, hex(addr)),                    # 地址
-                    (2, str(current_value) if value else "???"),  # 当前值
-                    (3, value_type),                   # 类型
-                    (4, "否"),                         # 锁定状态
-                    (5, desc)                          # 说明
-                ]
-
-                for col, value in items:
-                    self.result_table.setItem(row, col, QTableWidgetItem(str(value)))
-
-                self.logger.info(f"添加新地址: {hex(addr)}")
-                self.statusBar().showMessage(f"已添加地址: {hex(addr)}")
-
-        except ValueError as e:
-            self.logger.error(f"添加地址失败: {str(e)}")
-            self.statusBar().showMessage('请输入有效的地址')
+                values = dialog.get_values()
+                try:
+                    addr = int(values['address'], 16)
+                    self._add_to_result_table(
+                        addr=addr,
+                        desc=values['name'],
+                        value_type=values['data_type'],
+                        initial_value=values['value'],
+                        auto_lock=values['auto_lock']
+                    )
+                    self.statusBar().showMessage(f"已添加地址 {hex(addr)} 到修改列表")
+                except ValueError:
+                    self.statusBar().showMessage('请输入有效的地址')
         except Exception as e:
-            self.logger.error(f"添加地址时发生错误: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.statusBar().showMessage('添加地址时发生错误')
+            self.logger.error(f"添加地址失败: {str(e)}")
+            self.statusBar().showMessage("添加地址失败")
 
     def delete_address(self):
-        """删除选中的地址"""
+        """从结果表格中删除选中的地址"""
         current_row = self.result_table.currentRow()
         if current_row >= 0:
-            addr = int(self.result_table.item(current_row, 1).text(), 16)
-            if addr in self.locked_addresses:
-                del self.locked_addresses[addr]
-            self.result_table.removeRow(current_row)
+            try:
+                addr = int(self.result_table.item(current_row, 1).text(), 16)
+                if addr in self.locked_addresses:
+                    del self.locked_addresses[addr]
+                self.result_table.removeRow(current_row)
+                self.statusBar().showMessage(f"已删除地址 {hex(addr)}")
+            except Exception as e:
+                self.logger.error(f"删除地址失败: {str(e)}")
+                self.statusBar().showMessage("删除地址失败")
+        else:
+            self.statusBar().showMessage("请先选择要删除的地址")
 
     def clear_results(self):
-        """清空所有结果"""
-        self.memory_table.setRowCount(0)
+        """清空结果表格"""
         self.result_table.setRowCount(0)
-        self.search_results.clear()
         self.locked_addresses.clear()
-        self.statusBar().showMessage('已清空所有结果')
+        self.statusBar().showMessage('已清空修改列表')
+
+    def _on_memory_table_double_clicked(self, row, column):
+        """处理内存表格的双击事件"""
+        try:
+            # 获取当前行的数据
+            addr = self.memory_table.item(row, 0).text()
+            value = self.memory_table.item(row, 3).text().split(' ')[0]  # 获取四字节值
+            value_type = self.memory_table.item(row, 4).text()
+
+            # 创建并显示添加地址对话框，传入地址和值
+            dialog = AddressDialog(self, address=addr, value=value)
+
+            # 设置数据类型
+            if "浮点" in value_type:
+                dialog.type_float.setChecked(True)
+            elif "字符" in value_type:
+                dialog.type_string.setChecked(True)
+            else:
+                dialog.type_int.setChecked(True)
+
+            # 设置长度
+            if "单字节" in value_type:
+                dialog.length_combo.setCurrentText("单字节")
+            elif "双字节" in value_type:
+                dialog.length_combo.setCurrentText("双字节")
+            else:
+                dialog.length_combo.setCurrentText("四字节")
+
+            # 显示对话框
+            if dialog.exec_():
+                values = dialog.get_values()
+                # 添加到结果表格
+                self._add_to_result_table(
+                    addr=int(addr, 16),
+                    desc=values['name'],
+                    value_type=values['data_type'],
+                    initial_value=values['value'],
+                    auto_lock=values['auto_lock']
+                )
+
+                self.statusBar().showMessage(f"已添加地址 {addr} 到修改列表")
+
+        except Exception as e:
+            self.logger.error(f"处理双击事件失败: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.statusBar().showMessage("添加地址失败")
+
+    def _add_to_result_table(self, addr, desc, value_type, initial_value, auto_lock=False):
+        """添加一行到结果表格"""
+        row = self.result_table.rowCount()
+        self.result_table.insertRow(row)
+
+        # 转换数据类型显示
+        display_type = {
+            'int': '整数',
+            'float': '浮点',
+            'string': '字符串'
+        }.get(value_type, '整数')  # 默认为整数
+
+        items = [
+            (0, desc),                # 名称
+            (1, hex(addr)),          # 地址
+            (2, str(initial_value)), # 当前值
+            (3, display_type),       # 类型
+            (4, "是" if auto_lock else "否"),  # 锁定状态
+            (5, desc)                # 说明
+        ]
+
+        # 先创建所有项目，再设置到表格中
+        for col, value in items:
+            item = QTableWidgetItem(str(value))
+            # 让数值列和锁定列可编辑
+            if col not in [2, 4]:
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.result_table.setItem(row, col, item)
+
+        # 如果设置了自动锁定，添加到锁定列表
+        if auto_lock:
+            try:
+                if value_type == 'int':
+                    self.locked_addresses[addr] = int(initial_value)
+                elif value_type == 'float':
+                    self.locked_addresses[addr] = float(initial_value)
+            except ValueError:
+                self.logger.warning(f"无法锁定值: {initial_value}")
 
 class SearchThread(QThread):
     """搜索线程"""

@@ -1,52 +1,164 @@
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
-                           QLabel, QPushButton, QComboBox)
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                           QLineEdit, QComboBox, QRadioButton, QGroupBox,
+                           QPushButton, QCheckBox, QGridLayout)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 
 class AddressDialog(QDialog):
-    """添加地址对话框"""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, address=None, value=None):
         super().__init__(parent)
-        self.setWindowTitle('添加新地址')
-        self.setModal(True)
-        self.setup_ui()
+        self.setWindowTitle("添加修改")
+        self.setFixedSize(500, 320)  # 增加窗口大小
 
-    def setup_ui(self):
-        """设置UI布局"""
+        # 创建主布局
         layout = QVBoxLayout()
+        layout.setSpacing(10)
         self.setLayout(layout)
 
-        # 地址输入
-        addr_layout = QHBoxLayout()
-        addr_label = QLabel('地址:')
-        self.addr_input = QLineEdit()
-        self.addr_input.setPlaceholderText('输入16进制地址 (例如: 0x12345678)')
-        addr_layout.addWidget(addr_label)
-        addr_layout.addWidget(self.addr_input)
-        layout.addLayout(addr_layout)
+        # 创建上部分左右布局
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(10)  # 增加左右区域间距
+        layout.addLayout(top_layout)
 
-        # 描述输入
-        desc_layout = QHBoxLayout()
-        desc_label = QLabel('描述:')
-        self.desc_input = QLineEdit()
-        self.desc_input.setPlaceholderText('输入描述信息')
-        desc_layout.addWidget(desc_label)
-        desc_layout.addWidget(self.desc_input)
-        layout.addLayout(desc_layout)
+        # 左侧 - 数据属性组
+        data_group = QGroupBox("数据属性")
+        data_group.setMinimumWidth(230)  # 增加左侧宽度
+        data_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #a0a0a0;
+                margin-top: 6px;
+                padding-top: 8px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px;
+            }
+        """)
+        data_layout = QGridLayout()
+        data_layout.setSpacing(8)  # 增加网格间距
+        data_group.setLayout(data_layout)
 
-        # 类型选择
+        # 创建标签和输入框
+        labels = ['名称:', '数值:', '范围:', '长度:', '地址:']
+        self.inputs = {}
+
+        for i, label_text in enumerate(labels):
+            label = QLabel(label_text)
+            label.setFixedWidth(50)  # 增加标签宽度
+
+            if i == 0:  # 名称 - 下拉框
+                input_widget = QComboBox()
+                input_widget.setEditable(True)
+                input_widget.addItems(['金钱', '生命值', '魔法值', '经验值', '等级'])
+                self.name_combo = input_widget
+            elif i == 3:  # 长度 - 下拉框
+                input_widget = QComboBox()
+                input_widget.addItems(['单字节', '双字节', '四字节'])
+                self.length_combo = input_widget
+            else:  # 其他 - 文本框
+                input_widget = QLineEdit()
+                if i == 2:  # 范围
+                    input_widget.setText('0-65535')
+                elif i == 1 and value is not None:  # 数值
+                    input_widget.setText(str(value))
+                elif i == 4 and address is not None:  # 地址
+                    input_widget.setText(address)
+
+            label.setBuddy(input_widget)
+            data_layout.addWidget(label, i, 0)
+            data_layout.addWidget(input_widget, i, 1)
+            # 存储时使用不带格式符的键名
+            key = label_text.replace('(&N)', '').replace('(&V)', '').replace('(&R)', '')\
+                          .replace('(&L)', '').replace('(&A)', '').replace(':', '')
+            self.inputs[key] = input_widget
+
+        top_layout.addWidget(data_group)
+
+        # 右侧布局
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(10)  # 增加垂直间距
+        top_layout.addLayout(right_layout)
+
+        # 右侧 - 修改方式组
+        modify_group = QGroupBox("修改方式")
+        modify_group.setStyleSheet(data_group.styleSheet())
+        modify_layout = QVBoxLayout()
+        modify_layout.setSpacing(8)
+        modify_group.setLayout(modify_layout)
+
+        self.auto_radio = QRadioButton("自动锁定")
+        self.manual_radio = QRadioButton("手动修改")
+        self.manual_radio.setChecked(True)
+
+        modify_layout.addWidget(self.auto_radio)
+        modify_layout.addWidget(self.manual_radio)
+
+        right_layout.addWidget(modify_group)
+
+        # 右侧 - 数据类型组
+        type_group = QGroupBox("数据类型")
+        type_group.setStyleSheet(data_group.styleSheet())
         type_layout = QHBoxLayout()
-        type_label = QLabel('类型:')
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(['整数(4字节)', '浮点数', '双精度'])
-        type_layout.addWidget(type_label)
-        type_layout.addWidget(self.type_combo)
-        layout.addLayout(type_layout)
+        type_layout.setSpacing(15)  # 增加水平间距
+        type_group.setLayout(type_layout)
 
-        # 按钮区域
+        self.type_int = QRadioButton("整型")
+        self.type_float = QRadioButton("浮点")
+        self.type_string = QRadioButton("字符串")
+        self.type_int.setChecked(True)
+
+        type_layout.addWidget(self.type_int)
+        type_layout.addWidget(self.type_float)
+        type_layout.addWidget(self.type_string)
+
+        right_layout.addWidget(type_group)
+        right_layout.addStretch()
+
+        # 底部布局
+        bottom_layout = QVBoxLayout()
+        layout.addLayout(bottom_layout)
+
+        # 超出范围警告选项
+        self.range_warning = QCheckBox("修改超出范围时警告")
+        self.range_warning.setChecked(True)
+        bottom_layout.addWidget(self.range_warning)
+
+        # 按钮布局
         button_layout = QHBoxLayout()
-        ok_button = QPushButton('确定')
-        cancel_button = QPushButton('取消')
-        ok_button.clicked.connect(self.accept)
-        cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(ok_button)
-        button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
+        button_layout.setSpacing(10)
+        self.ok_button = QPushButton("确定(&O)")
+        self.cancel_button = QPushButton("取消(&C)")
+
+        button_style = """
+            QPushButton {
+                min-width: 75px;
+                padding: 4px 8px;
+            }
+        """
+        self.ok_button.setStyleSheet(button_style)
+        self.cancel_button.setStyleSheet(button_style)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+
+        bottom_layout.addLayout(button_layout)
+
+    def get_values(self):
+        """获取对话框中的所有值"""
+        return {
+            'name': self.name_combo.currentText(),
+            'value': self.inputs['数值'].text(),
+            'range': self.inputs['范围'].text(),
+            'length': self.length_combo.currentText(),
+            'address': self.inputs['地址'].text(),
+            'auto_lock': self.auto_radio.isChecked(),
+            'data_type': ('int' if self.type_int.isChecked() else
+                         'float' if self.type_float.isChecked() else 'string'),
+            'range_warning': self.range_warning.isChecked()
+        }
