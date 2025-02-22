@@ -1,9 +1,10 @@
 from PyQt5.QtGui import QIcon, QImage, QPixmap
-import win32gui
-import win32ui
-import win32con
-import win32api
 from win32com.shell import shell, shellcon
+import win32api
+import win32gui
+import win32con
+import win32ui
+from pathlib import Path
 
 def get_file_icon(exe_path, logger):
     """获取文件图标
@@ -15,52 +16,73 @@ def get_file_icon(exe_path, logger):
     Returns:
         QIcon: 文件图标，如果获取失败则返回空图标
     """
+    # 检查文件路径是否存在
+    if not Path(exe_path).exists():
+        logger.debug(f"文件路径无效: {exe_path}")
+        return QIcon(':/icons/default.png')  # 使用默认图标
+
     try:
-        # 使用SHGetFileInfo获取图标
-        flags = (shellcon.SHGFI_ICON |
-                shellcon.SHGFI_SMALLICON |
-                shellcon.SHGFI_USEFILEATTRIBUTES)
+        # 使用ExtractIconEx直接获取图标
+        large, small = win32gui.ExtractIconEx(str(exe_path), 0)
 
-        file_info = shell.SHGetFileInfo(
-            str(exe_path),
-            win32con.FILE_ATTRIBUTE_NORMAL,
-            flags
-        )
-
-        if file_info and file_info[0]:
+        if small:
             try:
-                # 获取图标句柄
-                hicon = file_info[0]
-
-                # 创建DC
-                screen_dc = win32gui.GetDC(0)
-                dc = win32ui.CreateDCFromHandle(screen_dc)
-                memdc = dc.CreateCompatibleDC()
-
-                # 创建位图
-                bitmap = win32ui.CreateBitmap()
-                bitmap.CreateCompatibleBitmap(dc, 16, 16)
-                old_bitmap = memdc.SelectObject(bitmap)
-
-                # 填充白色背景
-                memdc.FillSolidRect((0, 0, 16, 16), win32api.RGB(255, 255, 255))
-
-                # 绘制图标
-                win32gui.DrawIcon(memdc.GetHandleOutput(), 0, 0, hicon)
-
-                # 获取位图数据
-                bmpstr = bitmap.GetBitmapBits(True)
+                # 使用QPixmap直接从图标句柄创建图标
+                hicon = small[0]
+                if not hicon:
+                    raise Exception("无效的图标句柄")
+                icon_info = win32gui.GetIconInfo(hicon)
+                bmp = win32ui.CreateBitmapFromHandle(icon_info[4])
+                bmp_info = bmp.GetInfo()
+                bmp_str = bmp.GetBitmapBits(True)
 
                 # 创建QImage
-                image = QImage(bmpstr, 16, 16, QImage.Format_RGB32)
+                image = QImage(bmp_str, bmp_info['bmWidth'], bmp_info['bmHeight'], QImage.Format_ARGB32)
                 pixmap = QPixmap.fromImage(image)
 
                 # 清理资源
-                memdc.SelectObject(old_bitmap)
-                bitmap.DeleteObject()
-                memdc.DeleteDC()
-                dc.DeleteDC()
-                win32gui.ReleaseDC(0, screen_dc)
+                win32gui.DestroyIcon(hicon)
+
+                if not pixmap.isNull():
+                    return QIcon(pixmap)
+
+            except Exception as e:
+                logger.debug(f"处理图标失败: {str(e)}")
+                # 清理图标句柄
+                try:
+                    for icon in small:
+                        if icon:
+                            win32gui.DestroyIcon(icon)
+                    for icon in large:
+                        if icon:
+                            win32gui.DestroyIcon(icon)
+                except:
+                    pass
+    except Exception as e:
+        logger.debug(f"获取图标失败: {str(e)}")
+
+    # 如果上述方法失败，尝试使用SHGetFileInfo
+    try:
+        flags = (shellcon.SHGFI_ICON |
+                shellcon.SHGFI_SMALLICON)
+        file_info = shell.SHGetFileInfo(str(exe_path), 0, flags)
+
+        if file_info and file_info[0]:
+            try:
+                # 使用QPixmap直接从图标句柄创建图标
+                hicon = file_info[0]
+                if not hicon:
+                    raise Exception("无效的图标句柄")
+                icon_info = win32gui.GetIconInfo(hicon)
+                bmp = win32ui.CreateBitmapFromHandle(icon_info[4])
+                bmp_info = bmp.GetInfo()
+                bmp_str = bmp.GetBitmapBits(True)
+
+                # 创建QImage
+                image = QImage(bmp_str, bmp_info['bmWidth'], bmp_info['bmHeight'], QImage.Format_ARGB32)
+                pixmap = QPixmap.fromImage(image)
+
+                # 清理资源
                 win32gui.DestroyIcon(hicon)
 
                 if not pixmap.isNull():
@@ -69,75 +91,13 @@ def get_file_icon(exe_path, logger):
             except Exception as e:
                 logger.debug(f"处理图标失败: {str(e)}")
                 try:
-                    if hicon:
-                        win32gui.DestroyIcon(hicon)
+                    if file_info[0]:
+                        win32gui.DestroyIcon(file_info[0])
                 except:
                     pass
 
-        # 如果上述方法失败，尝试使用默认图标
-        try:
-            # 获取默认的.exe图标
-            flags = (shellcon.SHGFI_ICON |
-                    shellcon.SHGFI_SMALLICON |
-                    shellcon.SHGFI_USEFILEATTRIBUTES)
-
-            file_info = shell.SHGetFileInfo(
-                ".exe",
-                win32con.FILE_ATTRIBUTE_NORMAL,
-                flags
-            )
-
-            if file_info and file_info[0]:
-                try:
-                    hicon = file_info[0]
-
-                    # 创建DC
-                    screen_dc = win32gui.GetDC(0)
-                    dc = win32ui.CreateDCFromHandle(screen_dc)
-                    memdc = dc.CreateCompatibleDC()
-
-                    # 创建位图
-                    bitmap = win32ui.CreateBitmap()
-                    bitmap.CreateCompatibleBitmap(dc, 16, 16)
-                    old_bitmap = memdc.SelectObject(bitmap)
-
-                    # 填充白色背景
-                    memdc.FillSolidRect((0, 0, 16, 16), win32api.RGB(255, 255, 255))
-
-                    # 绘制图标
-                    win32gui.DrawIcon(memdc.GetHandleOutput(), 0, 0, hicon)
-
-                    # 获取位图数据
-                    bmpstr = bitmap.GetBitmapBits(True)
-
-                    # 创建QImage
-                    image = QImage(bmpstr, 16, 16, QImage.Format_RGB32)
-                    pixmap = QPixmap.fromImage(image)
-
-                    # 清理资源
-                    memdc.SelectObject(old_bitmap)
-                    bitmap.DeleteObject()
-                    memdc.DeleteDC()
-                    dc.DeleteDC()
-                    win32gui.ReleaseDC(0, screen_dc)
-                    win32gui.DestroyIcon(hicon)
-
-                    if not pixmap.isNull():
-                        return QIcon(pixmap)
-
-                except Exception as e:
-                    logger.debug(f"处理默认图标失败: {str(e)}")
-                    try:
-                        if hicon:
-                            win32gui.DestroyIcon(hicon)
-                    except:
-                        pass
-
-        except Exception as e:
-            logger.debug(f"获取默认图标失败: {str(e)}")
-
     except Exception as e:
-        logger.debug(f"获取图标完全失败: {str(e)}")
+        logger.debug(f"获取图标失败: {str(e)}")
 
-    # 如果所有方法都失败，返回一个空图标
-    return QIcon()
+    # 如果所有方法都失败，返回一个默认图标
+    return QIcon(':/icons/default.png')
