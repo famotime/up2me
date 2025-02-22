@@ -12,6 +12,7 @@ from pathlib import Path
 import json
 import struct
 from address_dialog import AddressDialog
+from PyQt5.QtGui import QIcon
 
 from src.delegates import LockStateDelegate
 from src.search_thread import SearchThread
@@ -616,6 +617,7 @@ if __name__ == '__main__':
             # 已经具有管理员权限，创建应用程序
             app = QApplication(sys.argv)
             app.setStyle('Fusion')
+            app.setWindowIcon(QIcon('nezha.png'))  # 设置应用程序图标
 
             # 创建主窗口
             window = GameCheater()
