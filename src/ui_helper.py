@@ -15,10 +15,6 @@ def create_process_section(process_combo, refresh_callback, attach_callback):
             padding: 5px 5px 5px 25px;  /* 调整左边距 */
             min-height: 25px;
         }
-        QComboBox::drop-down {
-            border: 1px solid #c0c0c0;
-            border-radius: 3px;
-        }
         QComboBox::item {
             padding-left: 25px;  /* 调整下拉项左边距 */
             height: 25px;

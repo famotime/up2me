@@ -37,7 +37,7 @@ class GameCheater(QMainWindow):
         self.config_file = Path('config.json')
         self.config = self._load_config()
 
-        self.setWindowTitle('"由我"游戏修改器')
+        self.setWindowTitle('"由我"修改器')
         self.setGeometry(100, 100, 800, 600)
 
         # 将窗口移动到屏幕中央
@@ -222,8 +222,7 @@ class GameCheater(QMainWindow):
     def first_scan(self):
         """首次扫描"""
         if not self.memory_reader.process_handle:
-            self.logger.warning("未附加进程")
-            self.statusBar().showMessage('请先附加进程')
+            self.show_status('请先附加进程', log=True)
             return
 
         try:
@@ -246,23 +245,24 @@ class GameCheater(QMainWindow):
             # 创建并启动搜索线程
             self.search_thread = SearchThread(self.memory_reader, search_value, type_name)
             self.search_thread.finished.connect(self._on_search_completed)
-            self.statusBar().showMessage('正在搜索...')
+            self.search_thread.progress.connect(self.show_status)  # 连接进度信号
+            self.show_status('正在搜索...', log=False)
             self.search_thread.start()
 
         except ValueError:
-            msg = '请输入有效的数值'
-            self.logger.warning(msg)
-            self.statusBar().showMessage(msg)
+            self.show_status('请输入有效的数值', log=True)
 
     def _on_search_completed(self, results):
         """搜索完成的回调函数"""
-        update_memory_table(self.memory_table, results, self.memory_reader, self.statusBar().showMessage)
+        def status_callback(msg, log=True):
+            self.show_status(msg, log)
+        update_memory_table(self.memory_table, results, self.memory_reader, status_callback)
         self.search_thread = None
 
     def next_scan(self):
         """下一次扫描"""
         if not self.memory_reader.last_results:
-            self.statusBar().showMessage('请先进行首次扫描')
+            self.show_status('请先进行首次扫描', log=True)
             return
 
         try:
@@ -279,16 +279,20 @@ class GameCheater(QMainWindow):
                 '未改变': 'unchanged'
             }
 
+            self.logger.info(f"开始下一次扫描: 值={value}, 类型={value_type}, 比较方式={compare_type}")
+
             results = self.memory_reader.search_value(
                 float(value) if '浮点' in value_type else int(value),
                 'float' if '浮点' in value_type else 'int32',
                 compare_map[compare_type]
             )
 
-            update_memory_table(self.memory_table, results, self.memory_reader, self.statusBar().showMessage)
+            def status_callback(msg, log=True):
+                self.show_status(msg, log)
+            update_memory_table(self.memory_table, results, self.memory_reader, status_callback)
 
         except ValueError:
-            self.statusBar().showMessage('请输入有效的数值')
+            self.show_status('请输入有效的数值', log=True)
 
     def new_address(self):
         """添加新地址到结果表格"""
@@ -592,6 +596,12 @@ class GameCheater(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"刷新结果表格失败: {str(e)}")
+
+    def show_status(self, message, log=True):
+        """显示状态栏消息，可选择是否记录到日志"""
+        self.statusBar().showMessage(message)
+        if log:
+            self.logger.info(message)
 
 if __name__ == '__main__':
     try:

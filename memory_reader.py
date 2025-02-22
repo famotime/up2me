@@ -69,116 +69,113 @@ class MemoryReader:
             self.logger.error(f"附加进程失败: {str(e)}")
             return False, str(e)
 
-    def search_value(self, value, value_type='int32', compare_type='exact'):
-        """搜索内存值"""
+    def search_value(self, value, value_type='int32', compare_type='exact', progress_callback=None):
+        """搜索内存中的值
+
+        Args:
+            value: 要搜索的值
+            value_type: 值类型 ('int32', 'float', 'double')
+            compare_type: 比较类型 ('exact', 'bigger', 'smaller', 'changed', 'unchanged')
+            progress_callback: 进度回调函数，接收当前进度和总数两个参数
+
+        Returns:
+            list: 匹配的地址列表
+        """
         if not self.process_handle:
+            self.logger.error("进程未附加")
             return []
 
         try:
             results = []
-            total_regions = 0
-            current_region = 0
+            searched_count = 0
 
-            # 先统计需要搜索的内存区域数量
-            system_info = SYSTEM_INFO()
-            ctypes.windll.kernel32.GetSystemInfo(ctypes.byref(system_info))
-            min_address = system_info.lpMinimumApplicationAddress
-            max_address = system_info.lpMaximumApplicationAddress
-
-            # 将地址转换为整数
-            current_address = ctypes.cast(min_address, ctypes.c_void_p).value
-            max_address_int = ctypes.cast(max_address, ctypes.c_void_p).value
-
-            mbi = MEMORY_BASIC_INFORMATION()
-
-            # 添加调试日志
-            self.logger.debug(f"开始搜索内存: 地址范围 {hex(current_address)} - {hex(max_address_int)}")
-
-            # 第一次遍历统计可搜索的内存区域数量
-            while current_address < max_address_int:
-                if not ctypes.windll.kernel32.VirtualQueryEx(
-                    self.process_handle.handle,
-                    ctypes.c_void_p(current_address),  # 转换为c_void_p
-                    ctypes.byref(mbi),
-                    ctypes.sizeof(mbi)
-                ):
-                    break
-
-                if (mbi.Protect & PAGE_READABLE and
-                    mbi.State == win32con.MEM_COMMIT and
-                    mbi.RegionSize < 100 * 1024 * 1024):  # 跳过超大内存区域
-                    total_regions += 1
-
-                current_address += mbi.RegionSize
-
-            # 确定搜索的字节模式
+            # 准备搜索值的字节表示
             if value_type == 'int32':
-                pattern = value.to_bytes(4, 'little')
+                value_bytes = int(value).to_bytes(4, 'little', signed=True)
             elif value_type == 'float':
-                pattern = struct.pack('<f', float(value))
-            elif value_type == 'double':
-                pattern = struct.pack('<d', float(value))
+                value_bytes = struct.pack('<f', float(value))
+            else:  # double
+                value_bytes = struct.pack('<d', float(value))
 
-            # 如果是第二次搜索，只搜索上次结果
-            search_addresses = self.last_results if self.last_results else None
+            # 如果是首次搜索
+            if not self.last_results or compare_type in ['changed', 'unchanged']:
+                # 获取系统信息
+                system_info = SYSTEM_INFO()
+                kernel32 = ctypes.windll.kernel32
+                kernel32.GetSystemInfo(ctypes.byref(system_info))
 
-            # 重置地址开始搜索
-            current_address = ctypes.cast(min_address, ctypes.c_void_p).value
+                # 设置搜索范围
+                min_address = system_info.lpMinimumApplicationAddress
+                max_address = system_info.lpMaximumApplicationAddress
 
-            # 第二次遍历执行实际搜索
-            while current_address < max_address_int:
-                if not ctypes.windll.kernel32.VirtualQueryEx(
-                    self.process_handle.handle,
-                    ctypes.c_void_p(current_address),  # 转换为c_void_p
-                    ctypes.byref(mbi),
-                    ctypes.sizeof(mbi)
-                ):
-                    break
+                # 准备搜索
+                current_address = min_address
+                memory_regions = []  # 存储可搜索的内存区域
 
-                try:
-                    # 检查内存区域是否可读且已提交，并跳过超大区域
-                    if (mbi.Protect & PAGE_READABLE and
-                        mbi.State == win32con.MEM_COMMIT and
-                        mbi.RegionSize < 100 * 1024 * 1024):
+                # 首先收集所有可搜索的内存区域
+                while current_address < max_address:
+                    mbi = MEMORY_BASIC_INFORMATION()
+                    if kernel32.VirtualQueryEx(
+                        self.process_handle.handle,
+                        ctypes.c_void_p(current_address),
+                        ctypes.byref(mbi),
+                        ctypes.sizeof(mbi)
+                    ):
+                        if (mbi.State == win32con.MEM_COMMIT and
+                            mbi.Protect & win32con.PAGE_READWRITE and
+                            not mbi.Protect & win32con.PAGE_GUARD):
+                            memory_regions.append((mbi.BaseAddress, mbi.RegionSize))
+                        current_address = mbi.BaseAddress + mbi.RegionSize
+                    else:
+                        break
 
-                        current_region += 1
-                        progress = (current_region * 100) // total_regions
-                        self.logger.info(f"搜索进度: {progress}% ({current_region}/{total_regions})")
+                total_count = len(memory_regions)
+                # 搜索每个内存区域
+                for base_address, region_size in memory_regions:
+                    try:
+                        data = self.read_memory(base_address, region_size)
+                        if data:
+                            # 在数据中搜索值
+                            pos = 0
+                            while True:
+                                pos = data.find(value_bytes, pos)
+                                if pos == -1:
+                                    break
+                                results.append(base_address + pos)
+                                pos += 1
 
-                        # 如果有上次结果，只检查这些地址
-                        if search_addresses:
-                            addrs_in_range = [
-                                addr for addr in search_addresses
-                                if current_address <= addr < current_address + mbi.RegionSize
-                            ]
-                            if addrs_in_range:
-                                for addr in addrs_in_range:
-                                    value = self.read_memory(addr, len(pattern))
-                                    if value and self._compare_value(value, pattern, compare_type):
-                                        results.append(addr)
-                        else:
-                            # 首次搜索时使用更大的块大小
-                            chunk_size = 4 * 1024 * 1024  # 4MB
-                            for offset in range(0, mbi.RegionSize, chunk_size):
-                                size = min(chunk_size, mbi.RegionSize - offset)
-                                buffer = self.read_memory(current_address + offset, size)
-                                if buffer:
-                                    # 使用更高效的搜索方法
-                                    pos = 0
-                                    while True:
-                                        pos = buffer.find(pattern, pos)
-                                        if pos == -1:
-                                            break
-                                        results.append(current_address + offset + pos)
-                                        pos += 1
+                    except Exception as e:
+                        self.logger.debug(f"读取内存区域失败: {str(e)}")
 
-                except Exception as e:
-                    self.logger.debug(f"搜索内存区域失败: {str(e)}")
+                    searched_count += 1
+                    if progress_callback and total_count > 0:
+                        progress = min(100, (searched_count * 100) // total_count)
+                        progress_callback(searched_count, total_count)
 
-                current_address += mbi.RegionSize
+            # 如果是下一次搜索
+            else:
+                total_count = len(self.last_results)
+                # 在上次结果中搜索
+                for addr in self.last_results:
+                    try:
+                        data = self.read_memory(addr, len(value_bytes))
+                        if data:
+                            if compare_type == 'exact' and data == value_bytes:
+                                results.append(addr)
+                            elif compare_type == 'bigger' and int.from_bytes(data, 'little') > int.from_bytes(value_bytes, 'little'):
+                                results.append(addr)
+                            elif compare_type == 'smaller' and int.from_bytes(data, 'little') < int.from_bytes(value_bytes, 'little'):
+                                results.append(addr)
+
+                    except Exception as e:
+                        self.logger.debug(f"读取内存失败: {str(e)}")
+
+                    searched_count += 1
+                    if progress_callback and total_count > 0:
+                        progress = min(100, (searched_count * 100) // total_count)
+                        progress_callback(searched_count, total_count)
 
             self.last_results = results
-            self.logger.info(f"搜索完成: 找到 {len(results)} 个匹配地址")
             return results
 
         except Exception as e:

@@ -26,9 +26,9 @@ def update_memory_table(memory_table, results, memory_reader, status_callback):
 
     try:
         for i, addr in enumerate(results):
-            # 更新状态栏显示进度
-            progress = (i + 1) * 100 // total if total > 0 else 100
-            status_callback(f"正在读取内存值... {progress}% ({i + 1}/{total})")
+            # 更新状态栏显示进度，但不记录到日志
+            progress = (i + 1) * 100 // total
+            status_callback(f"正在读取内存值... {progress}% ({i + 1}/{total})", log=False)
 
             # 设置地址
             memory_table.setItem(i, 0, QTableWidgetItem(hex(addr)))
@@ -52,10 +52,12 @@ def update_memory_table(memory_table, results, memory_reader, status_callback):
                 value_type = guess_value_type(value)
                 memory_table.setItem(i, 4, QTableWidgetItem(value_type))
 
+        # 搜索完成后显示结果数量
+        status_callback(f"找到 {total} 个结果", log=True)
         return True
 
     except Exception as e:
-        status_callback("更新内存表格时发生错误")
+        status_callback("更新内存表格时发生错误", log=True)
         return False
 
 def add_to_result_table(result_table, addr, desc, value_type, initial_value, memory_reader, logger, auto_lock=False):

@@ -8,7 +8,7 @@ class AddressDialog(QDialog):
     def __init__(self, parent=None, address=None, value=None):
         super().__init__(parent)
         self.setWindowTitle("添加修改")
-        self.setFixedSize(500, 320)  # 增加窗口大小
+        self.setFixedSize(500, 280)  # 增加窗口大小
 
         # 创建主布局
         layout = QVBoxLayout()
@@ -41,7 +41,7 @@ class AddressDialog(QDialog):
         data_group.setLayout(data_layout)
 
         # 创建标签和输入框
-        labels = ['名称:', '数值:', '范围:', '长度:', '地址:']
+        labels = ['名称:', '数值:', '长度:', '地址:']
         self.inputs = {}
 
         for i, label_text in enumerate(labels):
@@ -53,17 +53,17 @@ class AddressDialog(QDialog):
                 input_widget.setEditable(True)
                 input_widget.addItems(['金钱', '生命值', '魔法值', '经验值', '等级'])
                 self.name_combo = input_widget
-            elif i == 3:  # 长度 - 下拉框
+            elif i == 2:  # 长度 - 下拉框
                 input_widget = QComboBox()
                 input_widget.addItems(['单字节', '双字节', '四字节'])
                 self.length_combo = input_widget
             else:  # 其他 - 文本框
                 input_widget = QLineEdit()
-                if i == 2:  # 范围
-                    input_widget.setText('0-65535')
-                elif i == 1 and value is not None:  # 数值
+                # if i == 2:  # 范围
+                #     input_widget.setText('0-65535')
+                if i == 1 and value is not None:  # 数值
                     input_widget.setText(str(value))
-                elif i == 4 and address is not None:  # 地址
+                elif i == 3 and address is not None:  # 地址
                     input_widget.setText(address)
 
             label.setBuddy(input_widget)
@@ -154,7 +154,7 @@ class AddressDialog(QDialog):
         return {
             'name': self.name_combo.currentText(),
             'value': self.inputs['数值'].text(),
-            'range': self.inputs['范围'].text(),
+            # 'range': self.inputs['范围'].text(),
             'length': self.length_combo.currentText(),
             'address': self.inputs['地址'].text(),
             'auto_lock': self.auto_radio.isChecked(),

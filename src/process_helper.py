@@ -6,17 +6,24 @@ def get_game_processes():
     # 系统进程黑名单
     system_processes = {
         'svchost.exe', 'csrss.exe', 'services.exe', 'lsass.exe', 'winlogon.exe',
-        'smss.exe', 'spoolsv.exe', 'wininit.exe', 'RuntimeBroker.exe', 'SearchApp.exe',
-        'SystemSettings.exe', 'TextInputHost.exe', 'SearchIndexer.exe'
+        'smss.exe', 'spoolsv.exe', 'wininit.exe'
     }
 
-    # 游戏相关关键词
+    # 系统进程关键词黑名单
+    system_keywords = [
+        'system', 'service', 'host', 'agent', 'daemon', 'task', 'manager',
+        'explorer', 'chrome', 'firefox', 'edge', 'safari', 'opera', 'browser',
+        'wiz', 'utools', 'cursor', 'host', 'shell', 'event', 'log', 'qqpc',
+        'adobe', 'everything', 'container', 'search', 'broker', 'security',
+    ]
+
+    # 游戏和浏览器相关关键词
     game_keywords = [
         'game', 'unity', 'unreal', 'ue4', 'ue5', 'godot', 'cryengine',
         'directx', 'vulkan', 'opengl', 'steam', 'play', '游戏',
         'rpg', 'mmo', 'battle', 'fight', 'war', 'quest', 'raid',
         'arena', 'league', 'craft', 'world', 'dragon', 'sword',
-        'racing', 'shooter', 'combat', 'strategy'
+        'racing', 'shooter', 'combat', 'strategy',
     ]
 
     # 游戏相关路径
@@ -44,14 +51,18 @@ def get_game_processes():
             proc_name = proc_info['name'].lower()
             exe_path = Path(proc_info['exe']).resolve()
 
-            # 跳过系统进程
+            # 跳过黑名单中的系统进程
             if proc_name in system_processes:
                 continue
 
-            # 检查是否可能是游戏进程
+            # 跳过包含黑名单关键词的进程
+            if any(keyword in proc_name for keyword in system_keywords):
+                continue
+
+            # 检查是否可能是游戏或浏览器进程
             is_game = False
 
-            # 检查进程名称中是否包含游戏相关关键词
+            # 检查进程名称中是否包含游戏或浏览器相关关键词
             if any(keyword in proc_name for keyword in game_keywords):
                 is_game = True
 
@@ -71,12 +82,12 @@ def get_game_processes():
 
             # 如果进程名称不在黑名单中且内存大小超过特定值，也可能是游戏
             try:
-                if proc.memory_info().rss > 100 * 1024 * 1024:  # 大于100MB
+                if proc.memory_info().rss > 50 * 1024 * 1024:  # 大于50MB
                     is_game = True
             except:
                 pass
 
-            # 如果是游戏进程或者不在黑名单中的普通进程，都添加到列表
+            # 如果是游戏或浏览器进程，或者不在黑名单中的普通进程，都添加到列表
             if is_game or (not any(sys_proc in proc_name for sys_proc in system_processes)):
                 game_processes.append((proc_info['name'], proc_info['pid'], str(exe_path)))
 
