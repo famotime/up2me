@@ -69,7 +69,7 @@ class MemoryReader:
             self.logger.error(f"附加进程失败: {str(e)}")
             return False, str(e)
 
-    def search_value(self, value, value_type='int32', compare_type='exact', progress_callback=None):
+    def search_value(self, value, value_type='int32', compare_type='exact', progress_callback=None, search_in_results=None):
         """搜索内存中的值
 
         Args:
@@ -77,6 +77,7 @@ class MemoryReader:
             value_type: 值类型 ('int32', 'float', 'double')
             compare_type: 比较类型 ('exact', 'bigger', 'smaller', 'changed', 'unchanged')
             progress_callback: 进度回调函数，接收当前进度和总数两个参数
+            search_in_results: 在指定的结果列表中搜索，如果为None则搜索整个内存
 
         Returns:
             list: 匹配的地址列表
@@ -97,8 +98,31 @@ class MemoryReader:
             else:  # double
                 value_bytes = struct.pack('<d', float(value))
 
-            # 如果是首次搜索
-            if not self.last_results or compare_type in ['changed', 'unchanged']:
+            # 如果是在指定结果中搜索
+            if search_in_results is not None:
+                total_count = len(search_in_results)
+                # 在指定结果中搜索
+                for addr in search_in_results:
+                    try:
+                        data = self.read_memory(addr, len(value_bytes))
+                        if data:
+                            if compare_type == 'exact' and data == value_bytes:
+                                results.append(addr)
+                            elif compare_type == 'bigger' and int.from_bytes(data, 'little') > int.from_bytes(value_bytes, 'little'):
+                                results.append(addr)
+                            elif compare_type == 'smaller' and int.from_bytes(data, 'little') < int.from_bytes(value_bytes, 'little'):
+                                results.append(addr)
+
+                    except Exception as e:
+                        self.logger.debug(f"读取内存失败: {str(e)}")
+
+                    searched_count += 1
+                    if progress_callback and total_count > 0:
+                        progress = min(100, (searched_count * 100) // total_count)
+                        progress_callback(searched_count, total_count)
+
+            # 如果是搜索整个内存
+            else:
                 # 获取系统信息
                 system_info = SYSTEM_INFO()
                 kernel32 = ctypes.windll.kernel32
@@ -152,30 +176,6 @@ class MemoryReader:
                         progress = min(100, (searched_count * 100) // total_count)
                         progress_callback(searched_count, total_count)
 
-            # 如果是下一次搜索
-            else:
-                total_count = len(self.last_results)
-                # 在上次结果中搜索
-                for addr in self.last_results:
-                    try:
-                        data = self.read_memory(addr, len(value_bytes))
-                        if data:
-                            if compare_type == 'exact' and data == value_bytes:
-                                results.append(addr)
-                            elif compare_type == 'bigger' and int.from_bytes(data, 'little') > int.from_bytes(value_bytes, 'little'):
-                                results.append(addr)
-                            elif compare_type == 'smaller' and int.from_bytes(data, 'little') < int.from_bytes(value_bytes, 'little'):
-                                results.append(addr)
-
-                    except Exception as e:
-                        self.logger.debug(f"读取内存失败: {str(e)}")
-
-                    searched_count += 1
-                    if progress_callback and total_count > 0:
-                        progress = min(100, (searched_count * 100) // total_count)
-                        progress_callback(searched_count, total_count)
-
-            self.last_results = results
             return results
 
         except Exception as e:

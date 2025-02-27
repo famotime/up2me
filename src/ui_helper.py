@@ -40,14 +40,12 @@ def create_process_section(process_combo, refresh_callback, attach_callback):
 
     return process_layout
 
-def create_search_section(search_input, type_combo, compare_combo, first_scan_callback,
-                        next_scan_callback, new_address_callback, delete_address_callback,
-                        clear_results_callback):
+def create_search_section(search_input, type_combo, compare_combo, search_callback,
+                      new_task_callback):
     """创建搜索区域"""
-    search_layout = QVBoxLayout()  # 改用垂直布局
+    search_layout = QHBoxLayout()  # 使用水平布局
 
-    # 上方搜索条
-    top_layout = QHBoxLayout()
+    # 搜索条
     search_input.setPlaceholderText('输入搜索值')
 
     # 添加数值类型选择
@@ -56,33 +54,24 @@ def create_search_section(search_input, type_combo, compare_combo, first_scan_ca
     # 添加比较方式
     compare_combo.addItems(['精确匹配', '大于', '小于', '已改变', '未改变'])
 
-    top_layout.addWidget(QLabel('数值:'))
-    top_layout.addWidget(search_input)
-    top_layout.addWidget(QLabel('类型:'))
-    top_layout.addWidget(type_combo)
-    top_layout.addWidget(QLabel('比较:'))
-    top_layout.addWidget(compare_combo)
+    # 添加控件到布局
+    search_layout.addWidget(QLabel('数值:'))
+    search_layout.addWidget(search_input)
+    search_layout.addWidget(QLabel('类型:'))
+    search_layout.addWidget(type_combo)
+    search_layout.addWidget(QLabel('比较:'))
+    search_layout.addWidget(compare_combo)
 
-    # 下方按钮区
-    button_layout = QHBoxLayout()
+    # 添加搜索按钮
+    search_btn = QPushButton('搜索')
+    search_btn.clicked.connect(search_callback)
+    search_layout.addWidget(search_btn)
 
-    # 搜索按钮组
-    search_buttons = QHBoxLayout()
-    search_buttons.addWidget(create_button('首次扫描', first_scan_callback))
-    search_buttons.addWidget(create_button('下一次扫描', next_scan_callback))
-    button_layout.addLayout(search_buttons)
+    # 添加新建任务按钮
+    new_task_btn = QPushButton('新建')
+    new_task_btn.clicked.connect(new_task_callback)
+    search_layout.addWidget(new_task_btn)
 
-    button_layout.addStretch()  # 添加弹性空间
-
-    # 结果操作按钮组
-    result_buttons = QHBoxLayout()
-    result_buttons.addWidget(create_button('添加', new_address_callback))
-    result_buttons.addWidget(create_button('删除', delete_address_callback))
-    result_buttons.addWidget(create_button('清空', clear_results_callback))
-    button_layout.addLayout(result_buttons)
-
-    search_layout.addLayout(top_layout)
-    search_layout.addLayout(button_layout)
     return search_layout
 
 def create_button(text, callback):
@@ -162,3 +151,17 @@ def create_result_table(lock_delegate):
     result_table.setItemDelegateForColumn(4, lock_delegate)
 
     return result_table
+
+def create_table_control_section(new_address_callback, delete_address_callback, clear_results_callback):
+    """创建表格控制区域"""
+    control_layout = QHBoxLayout()
+
+    # 添加按钮
+    control_layout.addWidget(create_button('添加', new_address_callback))
+    control_layout.addWidget(create_button('删除', delete_address_callback))
+    control_layout.addWidget(create_button('清空', clear_results_callback))
+
+    # 添加弹性空间
+    control_layout.addStretch()
+
+    return control_layout

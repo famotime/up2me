@@ -19,8 +19,9 @@ from src.search_thread import SearchThread
 from src.icon_helper import get_file_icon
 from src.process_helper import get_game_processes
 from src.ui_helper import (create_process_section, create_search_section,
-                         create_memory_table, create_result_table)
+                         create_memory_table, create_result_table, create_table_control_section)
 from src.memory_helper import (update_memory_table, add_to_result_table)
+from src.task_manager import SearchTaskManager
 
 class GameCheater(QMainWindow):
     def __init__(self):
@@ -30,7 +31,6 @@ class GameCheater(QMainWindow):
         self.logger.info("游戏修改器启动")
 
         self.memory_reader = MemoryReader()
-        self.search_results = []
         self.locked_addresses = {}
 
         # 加载配置文件
@@ -56,8 +56,10 @@ class GameCheater(QMainWindow):
         self.type_combo = QComboBox()
         self.compare_combo = QComboBox()
 
-        # 初始化表格
-        self.memory_table = create_memory_table()
+        # 初始化任务管理器
+        self.task_manager = SearchTaskManager()
+
+        # 初始化结果表格
         self.result_table = create_result_table(LockStateDelegate(self))
 
         # 设置UI布局
@@ -70,7 +72,6 @@ class GameCheater(QMainWindow):
         self.refresh_process_list()
 
         # 添加事件处理
-        self.memory_table.cellDoubleClicked.connect(self._on_memory_table_double_clicked)
         self.result_table.itemChanged.connect(self._on_result_item_changed)
 
     def _setup_ui(self):
@@ -92,15 +93,21 @@ class GameCheater(QMainWindow):
             self.search_input,
             self.type_combo,
             self.compare_combo,
-            self.first_scan,
-            self.next_scan,
+            self._on_search_clicked,
+            self._on_new_task_clicked
+        ))
+
+        # 添加任务管理器
+        layout.addWidget(self.task_manager)
+
+        # 添加表格控制区域
+        layout.addLayout(create_table_control_section(
             self.new_address,
             self.delete_address,
             self.clear_results
         ))
 
-        # 添加表格
-        layout.addWidget(self.memory_table)
+        # 添加结果表格
         layout.addWidget(self.result_table)
 
     def _setup_timer(self):
@@ -204,6 +211,10 @@ class GameCheater(QMainWindow):
                 }
                 self._save_config()
 
+                # 清空所有任务
+                for task in self.task_manager.tasks:
+                    task.clear()
+
                 msg = f'成功附加到进程 {process_name} (PID: {pid})'
                 self.logger.info(msg)
                 self.statusBar().showMessage(msg)
@@ -219,8 +230,12 @@ class GameCheater(QMainWindow):
             self.logger.error(f"错误详情:\n{traceback.format_exc()}")
             self.statusBar().showMessage(error_msg)
 
-    def first_scan(self):
-        """首次扫描"""
+    def _on_search_clicked(self):
+        """处理搜索按钮点击事件"""
+        current_task = self.task_manager.get_current_task()
+        if not current_task:
+            return
+
         if not self.memory_reader.process_handle:
             self.show_status('请先附加进程', log=True)
             return
@@ -240,71 +255,51 @@ class GameCheater(QMainWindow):
                 search_value = float(value)
                 type_name = 'double'
 
-            self.logger.info(f"开始首次扫描: 值={search_value}, 类型={type_name}")
+            # 设置任务参数
+            current_task.value = search_value
+            current_task.value_type = type_name
+            current_task.compare_type = self.compare_combo.currentText()
+
+            self.logger.info(f"开始搜索: 值={search_value}, 类型={type_name}")
 
             # 创建并启动搜索线程
-            self.search_thread = SearchThread(self.memory_reader, search_value, type_name)
-            self.search_thread.finished.connect(self._on_search_completed)
-            self.search_thread.progress.connect(self.show_status)  # 连接进度信号
+            search_params = current_task.get_search_params()
+            self.search_thread = SearchThread(self.memory_reader, search_params)
+            self.search_thread.finished.connect(lambda results: self._on_search_completed(results, current_task))
+            self.search_thread.progress.connect(self.show_status)
             self.show_status('正在搜索...', log=False)
             self.search_thread.start()
 
         except ValueError:
             self.show_status('请输入有效的数值', log=True)
 
-    def _on_search_completed(self, results):
+    def _on_search_completed(self, results, task):
         """搜索完成的回调函数"""
         def status_callback(msg, log=True):
             self.show_status(msg, log)
-        update_memory_table(self.memory_table, results, self.memory_reader, status_callback)
+        task.update_results(results, self.memory_reader, status_callback)
         self.search_thread = None
 
-    def next_scan(self):
-        """下一次扫描"""
-        if not self.memory_reader.last_results:
-            self.show_status('请先进行首次扫描', log=True)
-            return
-
-        try:
-            value = self.search_input.text()
-            value_type = self.type_combo.currentText()
-            compare_type = self.compare_combo.currentText()
-
-            # 转换比较类型
-            compare_map = {
-                '精确匹配': 'exact',
-                '大于': 'bigger',
-                '小于': 'smaller',
-                '已改变': 'changed',
-                '未改变': 'unchanged'
-            }
-
-            self.logger.info(f"开始下一次扫描: 值={value}, 类型={value_type}, 比较方式={compare_type}")
-
-            results = self.memory_reader.search_value(
-                float(value) if '浮点' in value_type else int(value),
-                'float' if '浮点' in value_type else 'int32',
-                compare_map[compare_type]
-            )
-
-            def status_callback(msg, log=True):
-                self.show_status(msg, log)
-            update_memory_table(self.memory_table, results, self.memory_reader, status_callback)
-
-        except ValueError:
-            self.show_status('请输入有效的数值', log=True)
+    def _on_new_task_clicked(self):
+        """处理新建任务按钮点击事件"""
+        self.task_manager.add_task()
 
     def new_address(self):
         """添加新地址到结果表格"""
         try:
+            current_task = self.task_manager.get_current_task()
+            if not current_task or not current_task.memory_table:
+                self.statusBar().showMessage("请先选择搜索任务")
+                return
+
             # 获取当前选中的内存表格行
-            current_row = self.memory_table.currentRow()
+            current_row = current_task.memory_table.currentRow()
 
             # 如果有选中的行，获取该行的数据
             if current_row >= 0:
-                addr = self.memory_table.item(current_row, 0).text()
-                value = self.memory_table.item(current_row, 3).text().split(' ')[0]
-                value_type = self.memory_table.item(current_row, 4).text()
+                addr = current_task.memory_table.item(current_row, 0).text()
+                value = current_task.memory_table.item(current_row, 3).text().split(' ')[0]
+                value_type = current_task.memory_table.item(current_row, 4).text()
 
                 # 创建并显示添加地址对话框
                 dialog = AddressDialog(self, address=addr, value=value)
@@ -371,51 +366,6 @@ class GameCheater(QMainWindow):
         self.result_table.setRowCount(0)
         self.locked_addresses.clear()
         self.statusBar().showMessage('已清空修改列表')
-
-    def _on_memory_table_double_clicked(self, row, column):
-        """处理内存表格的双击事件"""
-        try:
-            # 获取当前行的数据
-            addr = self.memory_table.item(row, 0).text()
-            value = self.memory_table.item(row, 3).text().split(' ')[0]
-            value_type = self.memory_table.item(row, 4).text()
-
-            # 创建并显示添加地址对话框
-            dialog = AddressDialog(self, address=addr, value=value)
-
-            # 设置数据类型
-            if "浮点" in value_type:
-                dialog.type_float.setChecked(True)
-            elif "字符" in value_type:
-                dialog.type_string.setChecked(True)
-            else:
-                dialog.type_int.setChecked(True)
-
-            # 显示对话框
-            if dialog.exec_():
-                values = dialog.get_values()
-                success, is_locked = add_to_result_table(
-                    self.result_table,
-                    addr=int(addr, 16),
-                    desc=values['name'],
-                    value_type=values['data_type'],
-                    initial_value=values['value'],
-                    memory_reader=self.memory_reader,
-                    logger=self.logger,
-                    auto_lock=values['auto_lock']
-                )
-
-                if success:
-                    if is_locked:
-                        self.locked_addresses[int(addr, 16)] = values['value']
-                    self.statusBar().showMessage(f"已添加地址 {addr} 到修改列表")
-                else:
-                    self.statusBar().showMessage("添加地址失败")
-
-        except Exception as e:
-            self.logger.error(f"处理双击事件失败: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.statusBar().showMessage("添加地址失败")
 
     def _on_result_item_changed(self, item):
         """处理结果表格的值改变事件"""
@@ -534,8 +484,12 @@ class GameCheater(QMainWindow):
     def _refresh_memory_table(self):
         """刷新内存表格显示"""
         try:
-            for row in range(self.memory_table.rowCount()):
-                addr_item = self.memory_table.item(row, 0)
+            current_task = self.task_manager.get_current_task()
+            if not current_task or not current_task.memory_table:
+                return
+
+            for row in range(current_task.memory_table.rowCount()):
+                addr_item = current_task.memory_table.item(row, 0)
                 if not addr_item:
                     continue
 
@@ -544,16 +498,16 @@ class GameCheater(QMainWindow):
 
                 if value:
                     # 更新单字节值
-                    self.memory_table.item(row, 1).setText(str(value[0]))
+                    current_task.memory_table.item(row, 1).setText(str(value[0]))
 
                     # 更新双字节值
                     word_val = int.from_bytes(value[:2], 'little')
-                    self.memory_table.item(row, 2).setText(str(word_val))
+                    current_task.memory_table.item(row, 2).setText(str(word_val))
 
                     # 更新四字节值（整数和浮点数）
                     dword_val = int.from_bytes(value, 'little')
                     float_val = struct.unpack('<f', value)[0]
-                    self.memory_table.item(row, 3).setText(f"{dword_val} ({float_val:.2f})")
+                    current_task.memory_table.item(row, 3).setText(f"{dword_val} ({float_val:.2f})")
 
         except Exception as e:
             self.logger.error(f"刷新内存表格失败: {str(e)}")
