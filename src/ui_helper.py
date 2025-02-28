@@ -84,7 +84,7 @@ def create_memory_table():
     """创建内存表格"""
     memory_table = QTableWidget()
     memory_table.setColumnCount(5)
-    memory_table.setHorizontalHeaderLabels(['地址', '单字节', '双字节', '四字节', '类型'])
+    memory_table.setHorizontalHeaderLabels(['地址', '当前值', '先前值', '首次值', '类型'])
 
     # 设置表格样式
     memory_table.setStyleSheet("""
@@ -118,8 +118,8 @@ def create_memory_table():
 def create_result_table(lock_delegate):
     """创建结果表格"""
     result_table = QTableWidget()
-    result_table.setColumnCount(6)
-    result_table.setHorizontalHeaderLabels(['名称', '地址', '数值', '类型', '锁定', '说明'])
+    result_table.setColumnCount(5)
+    result_table.setHorizontalHeaderLabels(['名称', '地址', '数值', '类型', '锁定'])
 
     # 设置表格样式
     result_table.setStyleSheet("""

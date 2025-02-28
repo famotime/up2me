@@ -56,6 +56,9 @@ class GameCheater(QMainWindow):
         self.type_combo = QComboBox()
         self.compare_combo = QComboBox()
 
+        # 设置搜索输入框的回车键事件
+        self.search_input.returnPressed.connect(self._on_search_clicked)
+
         # 初始化任务管理器
         self.task_manager = SearchTaskManager()
 
@@ -251,9 +254,12 @@ class GameCheater(QMainWindow):
             elif '浮点' in value_type:
                 search_value = float(value)
                 type_name = 'float'
-            else:
+            elif '双精度' in value_type:
                 search_value = float(value)
                 type_name = 'double'
+            else:
+                search_value = float(value)
+                type_name = 'float'
 
             # 设置任务参数
             current_task.value = search_value
@@ -298,30 +304,37 @@ class GameCheater(QMainWindow):
             # 如果有选中的行，获取该行的数据
             if current_row >= 0:
                 addr = current_task.memory_table.item(current_row, 0).text()
-                value = current_task.memory_table.item(current_row, 3).text().split(' ')[0]
+                value = current_task.memory_table.item(current_row, 3).text()
                 value_type = current_task.memory_table.item(current_row, 4).text()
 
                 # 创建并显示添加地址对话框
                 dialog = AddressDialog(self, address=addr, value=value)
 
                 # 设置数据类型
-                if "浮点" in value_type:
+                if value_type == "浮点":
                     dialog.type_float.setChecked(True)
-                elif "字符" in value_type:
-                    dialog.type_string.setChecked(True)
+                elif value_type == "双精度":
+                    dialog.type_double.setChecked(True)
                 else:
                     dialog.type_int.setChecked(True)
 
             else:
                 # 如果没有选中行，则打开空白对话框
                 dialog = AddressDialog(self)
+                # 根据当前搜索类型设置默认值类型
+                if current_task.value_type == 'float':
+                    dialog.type_float.setChecked(True)
+                elif current_task.value_type == 'double':
+                    dialog.type_double.setChecked(True)
+                else:
+                    dialog.type_int.setChecked(True)
 
             # 显示对话框
             if dialog.exec_():
                 values = dialog.get_values()
                 try:
                     addr = int(values['address'], 16)
-                    success, is_locked = add_to_result_table(
+                    success, is_locked, lock_value = add_to_result_table(
                         self.result_table,
                         addr=addr,
                         desc=values['name'],
@@ -333,8 +346,8 @@ class GameCheater(QMainWindow):
                     )
 
                     if success:
-                        if is_locked:
-                            self.locked_addresses[addr] = values['value']
+                        if is_locked and lock_value is not None:
+                            self.locked_addresses[addr] = lock_value
                         self.statusBar().showMessage(f"已添加地址 {hex(addr)} 到修改列表")
                     else:
                         self.statusBar().showMessage("添加地址失败")
@@ -497,17 +510,46 @@ class GameCheater(QMainWindow):
                 value = self.memory_reader.read_memory(addr, 4)
 
                 if value:
-                    # 更新单字节值
-                    current_task.memory_table.item(row, 1).setText(str(value[0]))
+                    # 根据当前搜索类型格式化值
+                    value_type = self.memory_reader.current_value_type
+                    try:
+                        if value_type == 'int32':
+                            current_value = str(int.from_bytes(value, 'little', signed=True))
+                        elif value_type == 'float':
+                            current_value = f"{struct.unpack('<f', value)[0]:.2f}"
+                        else:  # double
+                            current_value = f"{struct.unpack('<d', value)[0]:.2f}"
 
-                    # 更新双字节值
-                    word_val = int.from_bytes(value[:2], 'little')
-                    current_task.memory_table.item(row, 2).setText(str(word_val))
+                        # 更新当前值
+                        current_item = current_task.memory_table.item(row, 1)
+                        if current_item:
+                            current_item.setText(current_value)
 
-                    # 更新四字节值（整数和浮点数）
-                    dword_val = int.from_bytes(value, 'little')
-                    float_val = struct.unpack('<f', value)[0]
-                    current_task.memory_table.item(row, 3).setText(f"{dword_val} ({float_val:.2f})")
+                        # 更新先前值（如果有）
+                        prev_value = current_task.prev_values.get(addr)
+                        prev_item = current_task.memory_table.item(row, 2)
+                        if prev_item:
+                            prev_item.setText(str(prev_value) if prev_value is not None else "-")
+
+                        # 更新首次值（如果有）
+                        first_value = current_task.first_values.get(addr)
+                        first_item = current_task.memory_table.item(row, 3)
+                        if first_item:
+                            first_item.setText(str(first_value) if first_value is not None else "-")
+
+                        # 高亮显示变化的值
+                        if prev_value is not None and current_item:
+                            if value_type == 'int32':
+                                has_changed = int(current_value) != prev_value
+                            else:  # float or double
+                                has_changed = abs(float(current_value) - prev_value) > 1e-6
+                            if has_changed:
+                                current_item.setBackground(Qt.yellow)
+                            else:
+                                current_item.setBackground(Qt.white)
+
+                    except Exception as e:
+                        self.logger.debug(f"格式化值失败: {str(e)}")
 
         except Exception as e:
             self.logger.error(f"刷新内存表格失败: {str(e)}")
@@ -518,38 +560,73 @@ class GameCheater(QMainWindow):
             for row in range(self.result_table.rowCount()):
                 addr_item = self.result_table.item(row, 1)
                 type_item = self.result_table.item(row, 3)
-                if not addr_item or not type_item:
+                lock_item = self.result_table.item(row, 4)
+                if not addr_item or not type_item or not lock_item:
                     continue
 
                 addr = int(addr_item.text(), 16)
                 value_type = type_item.text()
+                is_locked = lock_item.text() == "是"
 
-                # 读取内存值
-                value = self.memory_reader.read_memory(addr, 4)
-                if not value:
-                    continue
+                # 如果是锁定的地址，使用锁定的值
+                if is_locked and addr in self.locked_addresses:
+                    locked_value = self.locked_addresses[addr]
+                    try:
+                        # 根据类型格式化锁定值
+                        if value_type == '整数':
+                            buffer = int(locked_value).to_bytes(4, 'little', signed=True)
+                            if not self.memory_reader.write_memory(addr, buffer):
+                                self.logger.debug(f"写入锁定值失败: {addr}")
+                                continue
+                            current_value = str(locked_value)
+                        elif value_type == '浮点':
+                            buffer = struct.pack('<f', float(locked_value))
+                            if not self.memory_reader.write_memory(addr, buffer):
+                                self.logger.debug(f"写入锁定值失败: {addr}")
+                                continue
+                            current_value = f"{locked_value:.6f}"
+                        elif value_type == '双精度':
+                            buffer = struct.pack('<d', float(locked_value))
+                            if not self.memory_reader.write_memory(addr, buffer):
+                                self.logger.debug(f"写入锁定值失败: {addr}")
+                                continue
+                            current_value = f"{locked_value:.6f}"
+                        else:
+                            continue
+                    except (ValueError, struct.error) as e:
+                        self.logger.debug(f"处理锁定值失败: {str(e)}")
+                        continue
+                else:
+                    # 读取内存值
+                    size = 8 if value_type == '双精度' else 4
+                    value = self.memory_reader.read_memory(addr, size)
+                    if not value:
+                        continue
 
-                # 根据类型转换值
-                try:
-                    if value_type == '整数':
-                        current_value = str(int.from_bytes(value, 'little', signed=True))
-                    elif value_type == '浮点':
-                        current_value = f"{struct.unpack('<f', value)[0]:.2f}"
-                    else:  # 字符串
-                        current_value = value.decode('utf-8', errors='ignore')
+                    # 根据类型转换值
+                    try:
+                        if value_type == '整数':
+                            current_value = str(int.from_bytes(value, 'little', signed=True))
+                        elif value_type == '浮点':
+                            current_value = f"{struct.unpack('<f', value)[0]:.6f}"
+                        elif value_type == '双精度':
+                            current_value = f"{struct.unpack('<d', value)[0]:.6f}"
+                        else:
+                            continue
+                    except (ValueError, struct.error) as e:
+                        self.logger.debug(f"转换值失败: {str(e)}")
+                        continue
 
-                    # 更新显示的值（不触发 itemChanged 信号）
-                    value_item = self.result_table.item(row, 2)
-                    if value_item and value_item.text() != current_value:
-                        self.result_table.blockSignals(True)
-                        value_item.setText(current_value)
-                        self.result_table.blockSignals(False)
-
-                except Exception as e:
-                    self.logger.debug(f"转换值失败: {str(e)}")
+                # 更新显示的值（不触发 itemChanged 信号）
+                value_item = self.result_table.item(row, 2)
+                if value_item and value_item.text() != current_value:
+                    self.result_table.blockSignals(True)
+                    value_item.setText(current_value)
+                    self.result_table.blockSignals(False)
 
         except Exception as e:
             self.logger.error(f"刷新结果表格失败: {str(e)}")
+            self.logger.debug(traceback.format_exc())
 
     def show_status(self, message, log=True):
         """显示状态栏消息，可选择是否记录到日志"""

@@ -51,6 +51,7 @@ class MemoryReader:
         self.process_id = None
         self.logger = logging.getLogger('game_cheater')
         self.last_results = None  # 存储上次搜索结果
+        self.current_value_type = 'int32'  # 当前搜索的值类型
 
     def attach_process(self, pid):
         """附加到指定进程"""
@@ -86,17 +87,32 @@ class MemoryReader:
             self.logger.error("进程未附加")
             return []
 
+        # 更新当前值类型
+        self.current_value_type = value_type
+
         try:
             results = []
             searched_count = 0
 
-            # 准备搜索值的字节表示
+            # 准备搜索值的字节表示和数值
             if value_type == 'int32':
                 value_bytes = int(value).to_bytes(4, 'little', signed=True)
+                value_num = int(value)
+                value_size = 4
             elif value_type == 'float':
                 value_bytes = struct.pack('<f', float(value))
+                value_num = float(value)
+                value_size = 4
             else:  # double
                 value_bytes = struct.pack('<d', float(value))
+                value_num = float(value)
+                value_size = 8
+
+            # 定义浮点数比较函数
+            def compare_float(a, b, epsilon=1e-6):
+                if abs(a) < epsilon and abs(b) < epsilon:
+                    return abs(a - b) < epsilon
+                return abs((a - b) / max(abs(a), abs(b))) < epsilon
 
             # 如果是在指定结果中搜索
             if search_in_results is not None:
@@ -104,14 +120,33 @@ class MemoryReader:
                 # 在指定结果中搜索
                 for addr in search_in_results:
                     try:
-                        data = self.read_memory(addr, len(value_bytes))
-                        if data:
-                            if compare_type == 'exact' and data == value_bytes:
-                                results.append(addr)
-                            elif compare_type == 'bigger' and int.from_bytes(data, 'little') > int.from_bytes(value_bytes, 'little'):
-                                results.append(addr)
-                            elif compare_type == 'smaller' and int.from_bytes(data, 'little') < int.from_bytes(value_bytes, 'little'):
-                                results.append(addr)
+                        data = self.read_memory(addr, value_size)
+                        if data and len(data) == value_size:
+                            # 根据类型解析内存值
+                            try:
+                                if value_type == 'int32':
+                                    current_value = int.from_bytes(data, 'little', signed=True)
+                                elif value_type == 'float':
+                                    current_value = struct.unpack('<f', data)[0]
+                                else:  # double
+                                    current_value = struct.unpack('<d', data)[0]
+
+                                # 比较值
+                                if compare_type == 'exact':
+                                    if value_type == 'int32':
+                                        if current_value == value_num:
+                                            results.append(addr)
+                                    else:  # float or double
+                                        if compare_float(current_value, value_num):
+                                            results.append(addr)
+                                elif compare_type == 'bigger':
+                                    if current_value > value_num:
+                                        results.append(addr)
+                                elif compare_type == 'smaller':
+                                    if current_value < value_num:
+                                        results.append(addr)
+                            except (struct.error, ValueError, OverflowError):
+                                continue
 
                     except Exception as e:
                         self.logger.debug(f"读取内存失败: {str(e)}")
@@ -160,13 +195,33 @@ class MemoryReader:
                         data = self.read_memory(base_address, region_size)
                         if data:
                             # 在数据中搜索值
-                            pos = 0
-                            while True:
-                                pos = data.find(value_bytes, pos)
-                                if pos == -1:
-                                    break
-                                results.append(base_address + pos)
-                                pos += 1
+                            for i in range(0, len(data) - value_size + 1, value_size):  # 按数据类型大小对齐搜索
+                                chunk = data[i:i + value_size]
+                                if len(chunk) == value_size:
+                                    try:
+                                        if value_type == 'int32':
+                                            current_value = int.from_bytes(chunk, 'little', signed=True)
+                                        elif value_type == 'float':
+                                            current_value = struct.unpack('<f', chunk)[0]
+                                        else:  # double
+                                            current_value = struct.unpack('<d', chunk)[0]
+
+                                        # 比较值
+                                        if compare_type == 'exact':
+                                            if value_type == 'int32':
+                                                if current_value == value_num:
+                                                    results.append(base_address + i)
+                                            else:  # float or double
+                                                if compare_float(current_value, value_num):
+                                                    results.append(base_address + i)
+                                        elif compare_type == 'bigger':
+                                            if current_value > value_num:
+                                                results.append(base_address + i)
+                                        elif compare_type == 'smaller':
+                                            if current_value < value_num:
+                                                results.append(base_address + i)
+                                    except (struct.error, ValueError, OverflowError):
+                                        continue
 
                     except Exception as e:
                         self.logger.debug(f"读取内存区域失败: {str(e)}")
