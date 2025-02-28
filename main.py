@@ -303,9 +303,9 @@ class GameCheater(QMainWindow):
 
             # 如果有选中的行，获取该行的数据
             if current_row >= 0:
-                addr = current_task.memory_table.item(current_row, 0).text()
-                value = current_task.memory_table.item(current_row, 3).text()
-                value_type = current_task.memory_table.item(current_row, 4).text()
+                addr = current_task.memory_table.item(current_row, 0).text()  # 地址列
+                value = current_task.memory_table.item(current_row, 1).text()  # 当前值列
+                value_type = current_task.memory_table.item(current_row, 4).text()  # 类型列
 
                 # 创建并显示添加地址对话框
                 dialog = AddressDialog(self, address=addr, value=value)
@@ -507,11 +507,12 @@ class GameCheater(QMainWindow):
                     continue
 
                 addr = int(addr_item.text(), 16)
-                value = self.memory_reader.read_memory(addr, 4)
+                # 根据值类型决定读取大小
+                value_type = self.memory_reader.current_value_type
+                size = 8 if value_type == 'double' else 4
+                value = self.memory_reader.read_memory(addr, size)
 
                 if value:
-                    # 根据当前搜索类型格式化值
-                    value_type = self.memory_reader.current_value_type
                     try:
                         if value_type == 'int32':
                             current_value = str(int.from_bytes(value, 'little', signed=True))

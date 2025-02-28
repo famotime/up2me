@@ -109,10 +109,11 @@ class MemoryReader:
                 value_size = 8
 
             # 定义浮点数比较函数
-            def compare_float(a, b, epsilon=1e-6):
-                if abs(a) < epsilon and abs(b) < epsilon:
-                    return abs(a - b) < epsilon
-                return abs((a - b) / max(abs(a), abs(b))) < epsilon
+            def compare_float(a, b):
+                if abs(a) < 1e-10 and abs(b) < 1e-10:
+                    return abs(a - b) < 1e-10
+                relative_diff = abs(a - b) / max(abs(a), abs(b))
+                return relative_diff < 1e-4  # 放宽精度要求
 
             # 如果是在指定结果中搜索
             if search_in_results is not None:
@@ -195,7 +196,7 @@ class MemoryReader:
                         data = self.read_memory(base_address, region_size)
                         if data:
                             # 在数据中搜索值
-                            for i in range(0, len(data) - value_size + 1, value_size):  # 按数据类型大小对齐搜索
+                            for i in range(0, len(data) - value_size + 1):  # 每字节都检查，不再按类型大小步进
                                 chunk = data[i:i + value_size]
                                 if len(chunk) == value_size:
                                     try:

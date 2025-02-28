@@ -55,12 +55,10 @@ class AddressDialog(QDialog):
                 self.name_combo = input_widget
             elif i == 2:  # 长度 - 下拉框
                 input_widget = QComboBox()
-                input_widget.addItems(['单字节', '双字节', '四字节'])
+                input_widget.addItems(['单字节', '双字节', '四字节', '八字节'])  # 添加八字节选项
                 self.length_combo = input_widget
             else:  # 其他 - 文本框
                 input_widget = QLineEdit()
-                # if i == 2:  # 范围
-                #     input_widget.setText('0-65535')
                 if i == 1 and value is not None:  # 数值
                     input_widget.setText(str(value))
                 elif i == 3 and address is not None:  # 地址
@@ -100,17 +98,25 @@ class AddressDialog(QDialog):
         # 右侧 - 数据类型组
         type_group = QGroupBox("数据类型")
         type_group.setStyleSheet(data_group.styleSheet())
-        type_layout = QHBoxLayout()
-        type_layout.setSpacing(15)  # 增加水平间距
+        type_layout = QVBoxLayout()  # 改为垂直布局以容纳更多选项
+        type_layout.setSpacing(8)  # 增加垂直间距
         type_group.setLayout(type_layout)
 
         self.type_int = QRadioButton("整型")
         self.type_float = QRadioButton("浮点")
+        self.type_double = QRadioButton("双精度")  # 添加双精度选项
         self.type_string = QRadioButton("字符串")
         self.type_int.setChecked(True)
 
+        # 添加数据类型改变事件处理
+        self.type_int.toggled.connect(self._on_type_changed)
+        self.type_float.toggled.connect(self._on_type_changed)
+        self.type_double.toggled.connect(self._on_type_changed)
+        self.type_string.toggled.connect(self._on_type_changed)
+
         type_layout.addWidget(self.type_int)
         type_layout.addWidget(self.type_float)
+        type_layout.addWidget(self.type_double)  # 添加双精度选项
         type_layout.addWidget(self.type_string)
 
         right_layout.addWidget(type_group)
@@ -149,16 +155,32 @@ class AddressDialog(QDialog):
 
         bottom_layout.addLayout(button_layout)
 
+        # 初始化长度选择
+        self._on_type_changed()
+
+    def _on_type_changed(self):
+        """处理数据类型改变事件"""
+        # 根据数据类型设置对应的长度
+        if self.type_int.isChecked():
+            self.length_combo.setCurrentText('四字节')
+        elif self.type_float.isChecked():
+            self.length_combo.setCurrentText('四字节')
+        elif self.type_double.isChecked():
+            self.length_combo.setCurrentText('八字节')
+        else:  # string
+            self.length_combo.setCurrentText('单字节')
+
     def get_values(self):
         """获取对话框中的所有值"""
+        data_type = ('int' if self.type_int.isChecked() else
+                    'float' if self.type_float.isChecked() else
+                    'double' if self.type_double.isChecked() else 'string')
         return {
             'name': self.name_combo.currentText(),
             'value': self.inputs['数值'].text(),
-            # 'range': self.inputs['范围'].text(),
             'length': self.length_combo.currentText(),
             'address': self.inputs['地址'].text(),
             'auto_lock': self.auto_radio.isChecked(),
-            'data_type': ('int' if self.type_int.isChecked() else
-                         'float' if self.type_float.isChecked() else 'string'),
+            'data_type': data_type,
             'range_warning': self.range_warning.isChecked()
         }
