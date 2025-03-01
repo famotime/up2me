@@ -14,14 +14,14 @@ import struct
 from address_dialog import AddressDialog
 from PyQt5.QtGui import QIcon
 
-from src.delegates import LockStateDelegate
-from src.search_thread import SearchThread
-from src.icon_helper import get_file_icon
-from src.process_helper import get_game_processes
-from src.ui_helper import (create_process_section, create_search_section,
+from utils.delegates import LockStateDelegate
+from utils.search_thread import SearchThread
+from utils.icon_helper import get_file_icon
+from utils.process_helper import get_game_processes
+from utils.ui_helper import (create_process_section, create_search_section,
                          create_memory_table, create_result_table, create_table_control_section)
-from src.memory_helper import (update_memory_table, add_to_result_table)
-from src.task_manager import SearchTaskManager
+from utils.memory_helper import (update_memory_table, add_to_result_table)
+from utils.task_manager import SearchTaskManager
 
 class GameCheater(QMainWindow):
     def __init__(self):
@@ -517,9 +517,9 @@ class GameCheater(QMainWindow):
                         if value_type == 'int32':
                             current_value = str(int.from_bytes(value, 'little', signed=True))
                         elif value_type == 'float':
-                            current_value = f"{struct.unpack('<f', value)[0]:.2f}"
+                            current_value = f"{struct.unpack('<f', value)[0]:.6f}"
                         else:  # double
-                            current_value = f"{struct.unpack('<d', value)[0]:.2f}"
+                            current_value = f"{struct.unpack('<d', value)[0]:.6f}"
 
                         # 更新当前值
                         current_item = current_task.memory_table.item(row, 1)

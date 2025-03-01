@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QTableWidget
-from src.memory_helper import update_memory_table
+from utils.memory_helper import update_memory_table
 import struct
 import logging
 
@@ -21,7 +21,7 @@ class SearchTask:
 
     def create_memory_table(self):
         """创建内存表格"""
-        from src.ui_helper import create_memory_table
+        from utils.ui_helper import create_memory_table
         self.memory_table = create_memory_table()
         return self.memory_table
 

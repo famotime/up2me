@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QTabWidget, QWidget, QVBoxLayout,
                             QInputDialog, QMenu, QMessageBox)
 from PyQt5.QtCore import Qt
-from src.search_task import SearchTask
+from utils.search_task import SearchTask
 
 class SearchTaskManager(QTabWidget):
     """搜索任务管理器，管理多个搜索任务"""

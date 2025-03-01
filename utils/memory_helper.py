@@ -33,11 +33,17 @@ def update_memory_table(table, addresses, memory_reader, status_callback=None,
             if value_type == 'int32':
                 return str(int(value))  # 整数显示
             elif value_type == 'float':
-                return f"{float(value)}"  # 浮点数显示
+                return f"{float(value):.6f}"  # 浮点数显示
             else:  # double
-                return f"{float(value)}"  # 双精度显示
-        except (ValueError, TypeError):
-            return "-"
+                # 确保双精度值正确显示
+                if isinstance(value, bytes):
+                    # 如果是字节数据，使用struct.unpack解析
+                    return f"{struct.unpack('<d', value)[0]:.6f}"
+                else:
+                    # 如果已经是数值，直接格式化
+                    return f"{float(value):.6f}"
+        except (ValueError, TypeError, struct.error) as e:
+            return f"-错误:{str(e)}-"
 
     for row, addr in enumerate(addresses):
         try:
