@@ -139,8 +139,8 @@ def update_memory_table(table, addresses, memory_reader, status_callback=None,
 
                 type_text = type_mapping.get(value_type, value_type)
 
-                if logger:
-                    logger.debug(f"设置类型文本: {type_text} (原始类型: {value_type})")
+                # if logger:
+                    # logger.debug(f"设置类型文本: {type_text} (原始类型: {value_type})")
 
                 type_item = QTableWidgetItem(type_text)
                 table.setItem(row, 4, type_item)
@@ -249,6 +249,30 @@ def add_to_result_table(result_table, address=None, memory_reader=None, value_ty
                         initial_value = float(initial_value)
                     if logger:
                         logger.debug(f"转换初始值: {initial_value}, 类型={value_type}")
+
+                    # 如果用户提供了初始值，立即写入内存
+                    try:
+                        if value_type == 'int32':
+                            buffer = initial_value.to_bytes(4, 'little', signed=True)
+                        elif value_type == 'float':
+                            buffer = struct.pack('<f', initial_value)
+                        else:  # double
+                            buffer = struct.pack('<d', initial_value)
+
+                        # 写入内存
+                        if memory_reader.write_memory(address, buffer):
+                            if logger:
+                                logger.debug(f"成功写入初始值: 地址={hex(address)}, 值={initial_value}")
+                            # 更新当前值为写入的初始值
+                            current_value = initial_value
+                        else:
+                            if logger:
+                                logger.warning(f"写入初始值失败: 地址={hex(address)}, 值={initial_value}")
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"写入初始值时出错: {str(e)}")
+                            import traceback
+                            logger.debug(traceback.format_exc())
                 except (ValueError, TypeError) as e:
                     if logger:
                         logger.error(f"转换初始值失败: {str(e)}")
@@ -317,8 +341,8 @@ def add_to_result_table(result_table, address=None, memory_reader=None, value_ty
 
                     type_text = type_mapping.get(value_type, value_type)
 
-                    if logger:
-                        logger.debug(f"设置类型文本: {type_text} (原始类型: {value_type})")
+                    # if logger:
+                    #     logger.debug(f"设置类型文本: {type_text} (原始类型: {value_type})")
 
                     type_item = QTableWidgetItem(type_text)
                     result_table.setItem(row_count, 3, type_item)

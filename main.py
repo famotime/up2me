@@ -619,7 +619,7 @@ class GameCheater(QMainWindow):
                                     type_item = self.result_table.item(row, 3)
                                     if type_item and type_item.text() == '双精度':
                                         is_double = True
-                                        self.logger.debug(f"检测到双精度浮点数: 地址={hex(addr)}, 值={value}")
+                                        # self.logger.debug(f"检测到双精度浮点数: 地址={hex(addr)}, 值={value}")
                                     break
                         except Exception as e:
                             self.logger.debug(f"检测双精度类型时出错: {str(e)}")
