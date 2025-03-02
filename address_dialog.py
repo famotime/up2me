@@ -55,7 +55,7 @@ class AddressDialog(QDialog):
                 self.name_combo = input_widget
             elif i == 2:  # 长度 - 下拉框
                 input_widget = QComboBox()
-                input_widget.addItems(['单字节', '双字节', '四字节', '八字节'])  # 添加八字节选项
+                input_widget.addItems(['单字节', '双字节', '四字节', '八字节'])
                 self.length_combo = input_widget
             else:  # 其他 - 文本框
                 input_widget = QLineEdit()
@@ -99,25 +99,25 @@ class AddressDialog(QDialog):
         type_group = QGroupBox("数据类型")
         type_group.setStyleSheet(data_group.styleSheet())
         type_layout = QVBoxLayout()  # 改为垂直布局以容纳更多选项
-        type_layout.setSpacing(8)  # 增加垂直间距
+        type_layout.setSpacing(3)  # 增加垂直间距
         type_group.setLayout(type_layout)
 
         self.type_int = QRadioButton("整型")
         self.type_float = QRadioButton("浮点")
-        self.type_double = QRadioButton("双精度")  # 添加双精度选项
-        self.type_string = QRadioButton("字符串")
+        self.type_double = QRadioButton("双精度")
+        # self.type_string = QRadioButton("字符串")
         self.type_int.setChecked(True)
 
         # 添加数据类型改变事件处理
         self.type_int.toggled.connect(self._on_type_changed)
         self.type_float.toggled.connect(self._on_type_changed)
         self.type_double.toggled.connect(self._on_type_changed)
-        self.type_string.toggled.connect(self._on_type_changed)
+        # self.type_string.toggled.connect(self._on_type_changed)
 
         type_layout.addWidget(self.type_int)
         type_layout.addWidget(self.type_float)
-        type_layout.addWidget(self.type_double)  # 添加双精度选项
-        type_layout.addWidget(self.type_string)
+        type_layout.addWidget(self.type_double)
+        # type_layout.addWidget(self.type_string)
 
         right_layout.addWidget(type_group)
         right_layout.addStretch()
@@ -172,9 +172,15 @@ class AddressDialog(QDialog):
 
     def get_values(self):
         """获取对话框中的所有值"""
-        data_type = ('int' if self.type_int.isChecked() else
+        data_type = ('int32' if self.type_int.isChecked() else
                     'float' if self.type_float.isChecked() else
                     'double' if self.type_double.isChecked() else 'string')
+
+        # 确保range_warning属性存在
+        range_warning_value = True
+        if hasattr(self, 'range_warning'):
+            range_warning_value = self.range_warning.isChecked()
+
         return {
             'name': self.name_combo.currentText(),
             'value': self.inputs['数值'].text(),
@@ -182,5 +188,46 @@ class AddressDialog(QDialog):
             'address': self.inputs['地址'].text(),
             'auto_lock': self.auto_radio.isChecked(),
             'data_type': data_type,
-            'range_warning': self.range_warning.isChecked()
+            'range_warning': range_warning_value
         }
+
+    def get_value_type(self):
+        """获取数据类型，返回memory_reader兼容的格式"""
+        # 获取父窗口的logger
+        logger = None
+        if hasattr(self.parent(), 'logger'):
+            logger = self.parent().logger
+
+        value_type = None
+        if self.type_int.isChecked():
+            value_type = 'int32'
+        elif self.type_float.isChecked():
+            value_type = 'float'
+        elif self.type_double.isChecked():
+            value_type = 'double'
+        else:  # string
+            value_type = 'string'
+
+        if logger:
+            logger.debug(f"获取数据类型: {value_type}")
+
+            # 验证类型是否有效
+            if value_type not in ['int32', 'float', 'double']:
+                logger.warning(f"不支持的数据类型: {value_type}")
+
+        return value_type
+
+    def get_address(self):
+        """获取地址"""
+        try:
+            return int(self.inputs['地址'].text(), 16)
+        except ValueError:
+            return None
+
+    def get_description(self):
+        """获取描述"""
+        return self.name_combo.currentText()
+
+    def get_auto_lock(self):
+        """获取是否自动锁定"""
+        return self.auto_radio.isChecked()

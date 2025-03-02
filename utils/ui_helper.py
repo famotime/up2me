@@ -49,7 +49,7 @@ def create_search_section(search_input, type_combo, compare_combo, search_callba
     search_input.setPlaceholderText('输入搜索值')
 
     # 添加数值类型选择
-    type_combo.addItems(['整数(4字节)', '浮点数', '双精度'])
+    type_combo.addItems(['整数', '浮点数', '双精度'])
 
     # 添加比较方式
     compare_combo.addItems(['精确匹配', '大于', '小于', '已改变', '未改变'])
@@ -72,7 +72,8 @@ def create_search_section(search_input, type_combo, compare_combo, search_callba
     new_task_btn.clicked.connect(new_task_callback)
     search_layout.addWidget(new_task_btn)
 
-    return search_layout
+    # 返回布局和搜索按钮，以便在主类中保存引用
+    return search_layout, search_btn
 
 def create_button(text, callback):
     """创建按钮的辅助方法"""

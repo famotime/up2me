@@ -2,6 +2,7 @@ from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
 import datetime
+import sys
 
 def setup_logger(name='game_cheater'):
     """
@@ -23,6 +24,12 @@ def setup_logger(name='game_cheater'):
 
     # 创建日志记录器
     logger = logging.getLogger(name)
+
+    # 如果已经有处理器，先清除
+    if logger.handlers:
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+
     logger.setLevel(logging.DEBUG)
 
     # 创建文件处理器
@@ -35,7 +42,7 @@ def setup_logger(name='game_cheater'):
     file_handler.setLevel(logging.DEBUG)
 
     # 创建控制台处理器
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
 
     # 设置日志格式
@@ -48,5 +55,8 @@ def setup_logger(name='game_cheater'):
     # 添加处理器
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+    # 测试日志记录
+    logger.debug("日志系统初始化完成")
 
     return logger

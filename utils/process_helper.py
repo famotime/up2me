@@ -45,11 +45,18 @@ def get_game_processes():
     for proc in psutil.process_iter(['pid', 'name', 'exe']):
         try:
             proc_info = proc.info
-            if not proc_info['name'] or not proc_info['exe']:  # 跳过没有名称或路径的进程
+
+            # 确保进程信息完整
+            if not proc_info.get('name') or not proc_info.get('exe'):
                 continue
 
             proc_name = proc_info['name'].lower()
-            exe_path = Path(proc_info['exe']).resolve()
+
+            try:
+                exe_path = Path(proc_info['exe']).resolve()
+            except:
+                # 如果路径解析失败，跳过此进程
+                continue
 
             # 跳过黑名单中的系统进程
             if proc_name in system_processes:
@@ -92,6 +99,9 @@ def get_game_processes():
                 game_processes.append((proc_info['name'], proc_info['pid'], str(exe_path)))
 
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception:
+            # 捕获所有其他异常，确保进程列表刷新不会崩溃
             continue
 
     # 按进程名称排序（不区分大小写）

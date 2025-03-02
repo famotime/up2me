@@ -2,8 +2,8 @@ import sys
 import ctypes
 import win32com.shell.shell as shell
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                           QHBoxLayout, QTableWidget, QLineEdit, QComboBox)
-from PyQt5.QtCore import Qt, QTimer
+                           QHBoxLayout, QTableWidget, QLineEdit, QComboBox, QPushButton, QLabel)
+from PyQt5.QtCore import Qt, QTimer, QCoreApplication
 import psutil
 from memory_reader import MemoryReader
 from utils.logger import setup_logger
@@ -26,7 +26,6 @@ from utils.task_manager import SearchTaskManager
 class GameCheater(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.search_thread = None
         self.logger = setup_logger()
         self.logger.info("游戏修改器启动")
 
@@ -62,6 +61,9 @@ class GameCheater(QMainWindow):
         # 初始化任务管理器
         self.task_manager = SearchTaskManager()
 
+        # 将任务列表赋值给memory_reader
+        self.memory_reader.active_tasks = self.task_manager.tasks
+
         # 初始化结果表格
         self.result_table = create_result_table(LockStateDelegate(self))
 
@@ -92,13 +94,14 @@ class GameCheater(QMainWindow):
         ))
 
         # 添加搜索区域
-        layout.addLayout(create_search_section(
+        search_layout, self.search_button = create_search_section(
             self.search_input,
             self.type_combo,
             self.compare_combo,
             self._on_search_clicked,
             self._on_new_task_clicked
-        ))
+        )
+        layout.addLayout(search_layout)
 
         # 添加任务管理器
         layout.addWidget(self.task_manager)
@@ -112,6 +115,11 @@ class GameCheater(QMainWindow):
 
         # 添加结果表格
         layout.addWidget(self.result_table)
+
+        # 添加停止按钮
+        self.stop_button = QPushButton("停止")
+        self.stop_button.setEnabled(False)
+        layout.addWidget(self.stop_button)
 
     def _setup_timer(self):
         """设置定时器用于更新锁定的值和刷新显示"""
@@ -153,22 +161,40 @@ class GameCheater(QMainWindow):
         selected_index = -1
 
         try:
+            self.logger.debug("开始刷新进程列表")
             game_processes = get_game_processes()
+            self.logger.debug(f"获取到 {len(game_processes)} 个进程")
 
             # 将进程添加到下拉列表
             for i, (name, pid, exe_path) in enumerate(game_processes):
-                process_text = f"{name} ({pid})"
-                icon = get_file_icon(exe_path, self.logger)
-                self.process_combo.addItem(icon, process_text)
+                try:
+                    process_text = f"{name} ({pid})"
 
-                # 如果找到上次使用的进程，记录其索引
-                if last_process and last_process['name'] == name:
-                    selected_index = i
+                    # 获取图标，如果失败则使用空图标
+                    try:
+                        icon = get_file_icon(exe_path, self.logger)
+                        if icon.isNull():
+                            self.logger.debug(f"进程 {name} 的图标为空，使用默认图标")
+                            icon = QIcon()  # 使用空图标
+                    except Exception as e:
+                        self.logger.debug(f"获取进程 {name} 的图标失败: {str(e)}")
+                        icon = QIcon()  # 使用空图标
+
+                    self.process_combo.addItem(icon, process_text)
+                    self.logger.debug(f"添加进程到列表: {process_text}")
+
+                    # 如果找到上次使用的进程，记录其索引
+                    if last_process and isinstance(last_process, dict) and last_process.get('name') == name:
+                        selected_index = i
+                        self.logger.debug(f"找到上次使用的进程: {name}, 索引: {i}")
+                except Exception as e:
+                    self.logger.error(f"添加进程 {name} 到列表失败: {str(e)}")
+                    continue
 
             # 如果找到上次使用的进程，设置为当前选中项
             if selected_index >= 0:
                 self.process_combo.setCurrentIndex(selected_index)
-                self.logger.info(f"找到上次使用的进程: {last_process['name']}")
+                self.logger.info(f"设置上次使用的进程为当前选中项: {last_process.get('name')}")
 
             # 更新状态栏
             msg = f'找到 {len(game_processes)} 个可能的游戏进程'
@@ -177,6 +203,8 @@ class GameCheater(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"刷新进程列表失败: {str(e)}")
+            import traceback
+            self.logger.error(f"错误详情:\n{traceback.format_exc()}")
             self.statusBar().showMessage('刷新进程列表失败')
 
     def attach_process(self):
@@ -188,12 +216,19 @@ class GameCheater(QMainWindow):
             return
 
         try:
+            # 停止所有正在进行的搜索
+            searching_count = self.task_manager.get_searching_tasks_count()
+            if searching_count > 0:
+                self.task_manager.stop_all_searches()
+                self.logger.info(f"已停止 {searching_count} 个正在进行的搜索任务")
+
             process_text = self.process_combo.currentText()
             self.logger.info(f"正在尝试附加进程: {process_text}")
 
             # 解析进程名和PID
             process_name = process_text.split(' (')[0]
             pid = int(process_text.split('(')[-1].strip(')'))
+            self.logger.debug(f"解析进程信息: 名称={process_name}, PID={pid}")
 
             # 检查进程是否存在
             if not psutil.pid_exists(pid):
@@ -204,91 +239,142 @@ class GameCheater(QMainWindow):
 
             # 尝试附加进程
             self.logger.debug(f"开始附加进程 PID: {pid}")
-            result, message = self.memory_reader.attach_process(pid)
+            success, message = self.memory_reader.attach_process(pid)
 
-            if result:
+            if success:
+                self.logger.info(f"成功附加到进程: {process_name} (PID: {pid})")
+                self.statusBar().showMessage(f"已附加到进程: {process_name}")
+
                 # 保存当前进程信息到配置
-                self.config['last_process'] = {
-                    'name': process_name,
-                    'pid': pid
-                }
+                self.config['last_process'] = process_text
                 self._save_config()
+                self.logger.debug(f"已保存进程信息到配置: {process_text}")
 
-                # 清空所有任务
-                for task in self.task_manager.tasks:
-                    task.clear()
+                # 清空所有任务的搜索结果
+                self.task_manager.clear_all_tasks_results()
+                self.logger.debug("已清空所有任务的搜索结果")
 
-                msg = f'成功附加到进程 {process_name} (PID: {pid})'
-                self.logger.info(msg)
-                self.statusBar().showMessage(msg)
-                self.clear_results()
+                # 刷新内存表格
+                self._refresh_memory_table()
+                self.logger.debug("已刷新内存表格")
             else:
-                msg = f'附加进程失败: {message}'
-                self.logger.error(msg)
-                self.statusBar().showMessage(msg)
-
+                self.logger.error(f"附加进程失败: {message}")
+                self.statusBar().showMessage(f"附加进程失败: {message}")
         except Exception as e:
-            error_msg = f'附加进程时发生错误: {str(e)}'
-            self.logger.error(error_msg)
-            self.logger.error(f"错误详情:\n{traceback.format_exc()}")
-            self.statusBar().showMessage(error_msg)
+            self.logger.error(f"附加进程时出错: {str(e)}")
+            self.statusBar().showMessage(f"附加进程时出错: {str(e)}")
+            import traceback
+            self.logger.debug(f"错误详情: {traceback.format_exc()}")
 
     def _on_search_clicked(self):
-        """处理搜索按钮点击事件"""
-        current_task = self.task_manager.get_current_task()
-        if not current_task:
-            return
-
-        if not self.memory_reader.process_handle:
-            self.show_status('请先附加进程', log=True)
-            return
-
+        """搜索按钮点击事件"""
         try:
-            value = self.search_input.text()
+            self.logger.info("开始搜索操作")
+
+            # 检查是否已附加到进程
+            if not self.memory_reader.process_handle:
+                self.logger.warning("搜索失败：未附加到进程")
+                self.statusBar().showMessage("请先附加到进程", 3000)
+                return
+
+            # 获取当前活动的任务
+            current_task = self.task_manager.get_current_task()
+            if not current_task:
+                self.logger.warning("搜索失败：未创建任务")
+                self.statusBar().showMessage("请先创建任务", 3000)
+                return
+
+            # 获取搜索值
+            value_text = self.search_input.text().strip()
+            if not value_text:
+                self.logger.warning("搜索失败：未输入搜索值")
+                self.statusBar().showMessage("请输入搜索值", 3000)
+                return
+
+            # 获取值类型
             value_type = self.type_combo.currentText()
+            value_type_map = {
+                "整数": "int32",
+                "浮点数": "float",
+                "单精度": "float",
+                "双精度": "double"
+            }
+            value_type = value_type_map.get(value_type, "int32")
+            self.logger.debug(f"搜索值类型: {value_type} (原始类型: {self.type_combo.currentText()})")
 
-            # 转换值类型
-            if '整数' in value_type:
-                search_value = int(value)
-                type_name = 'int32'
-            elif '浮点' in value_type:
-                search_value = float(value)
-                type_name = 'float'
-            elif '双精度' in value_type:
-                search_value = float(value)
-                type_name = 'double'
-            else:
-                search_value = float(value)
-                type_name = 'float'
+            # 获取比较类型
+            compare_type = self.compare_combo.currentText()
+            self.logger.debug(f"比较类型: {compare_type}")
 
-            # 设置任务参数
-            current_task.value = search_value
-            current_task.value_type = type_name
-            current_task.compare_type = self.compare_combo.currentText()
+            # 转换搜索值
+            try:
+                if value_type == "int32":
+                    value = int(value_text)
+                    self.logger.debug(f"转换整数值: {value}")
+                else:  # float or double
+                    value = float(value_text)
+                    self.logger.debug(f"转换浮点值: {value}")
+            except ValueError:
+                self.logger.error(f"无效的{value_type}值: {value_text}")
+                self.statusBar().showMessage(f"无效的{value_type}值: {value_text}", 3000)
+                return
 
-            self.logger.info(f"开始搜索: 值={search_value}, 类型={type_name}")
+            # 保存当前任务的值类型
+            current_task.value_type = value_type
+            current_task.value = value
+            current_task.compare_type = compare_type
+            self.logger.debug(f"更新任务 '{current_task.name}' 的参数: 值={value}, 类型={value_type}, 比较方式={compare_type}")
+
+            # 禁用搜索按钮，避免重复点击
+            self.search_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+            self.logger.debug("禁用搜索按钮，启用停止按钮")
+
+            # 更新状态栏
+            self.statusBar().showMessage("正在准备搜索...", 0)
+
+            # 准备搜索参数
+            search_params = {
+                "value": value,
+                "value_type": value_type,
+                "compare_type": compare_type,
+                "last_results": current_task.last_results,
+                "is_first_search": current_task.is_first_search,
+                "task": current_task
+            }
+            self.logger.info(f"开始搜索: 值={value}, 类型={value_type}, 比较方式={compare_type}, 是否首次搜索={current_task.is_first_search}")
 
             # 创建并启动搜索线程
-            search_params = current_task.get_search_params()
-            self.search_thread = SearchThread(self.memory_reader, search_params)
-            self.search_thread.finished.connect(lambda results: self._on_search_completed(results, current_task))
-            self.search_thread.progress.connect(self.show_status)
-            self.show_status('正在搜索...', log=False)
+            self.search_thread = SearchThread(self.memory_reader, search_params, self.logger)
+            self.search_thread.progress.connect(self._on_search_progress)
+            self.search_thread.finished.connect(lambda result: self._on_search_finished(result))
             self.search_thread.start()
-
-        except ValueError:
-            self.show_status('请输入有效的数值', log=True)
-
-    def _on_search_completed(self, results, task):
-        """搜索完成的回调函数"""
-        def status_callback(msg, log=True):
-            self.show_status(msg, log)
-        task.update_results(results, self.memory_reader, status_callback)
-        self.search_thread = None
+            self.logger.debug("搜索线程已启动")
+        except Exception as e:
+            self.logger.error(f"搜索按钮点击事件处理失败: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            self.statusBar().showMessage(f"搜索失败: {str(e)}", 3000)
+            self.search_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
 
     def _on_new_task_clicked(self):
         """处理新建任务按钮点击事件"""
-        self.task_manager.add_task()
+        new_task = self.task_manager.add_task()
+
+        # 设置新任务的内存读取器和值类型
+        new_task.memory_reader = self.memory_reader
+
+        # 使用当前选择的值类型
+        value_type = self.type_combo.currentText().lower()
+        if value_type == '整数':
+            new_task.value_type = 'int32'
+        elif value_type == '浮点':
+            new_task.value_type = 'float'
+        elif value_type == '双精度':
+            new_task.value_type = 'double'
+        else:
+            new_task.value_type = 'int32'  # 默认为整数
 
     def new_address(self):
         """添加新地址到结果表格"""
@@ -311,12 +397,20 @@ class GameCheater(QMainWindow):
                 dialog = AddressDialog(self, address=addr, value=value)
 
                 # 设置数据类型
-                if value_type == "浮点":
-                    dialog.type_float.setChecked(True)
-                elif value_type == "双精度":
-                    dialog.type_double.setChecked(True)
+                type_to_radio = {
+                    "整数": dialog.type_int,
+                    "浮点": dialog.type_float,
+                    "单精度": dialog.type_float,
+                    "双精度": dialog.type_double
+                }
+
+                if value_type in type_to_radio:
+                    type_to_radio[value_type].setChecked(True)
+                    self.logger.debug(f"设置对话框数据类型: {value_type}")
                 else:
+                    # 默认使用整型
                     dialog.type_int.setChecked(True)
+                    self.logger.debug(f"未知数据类型 {value_type}，默认使用整型")
 
             else:
                 # 如果没有选中行，则打开空白对话框
@@ -334,11 +428,21 @@ class GameCheater(QMainWindow):
                 values = dialog.get_values()
                 try:
                     addr = int(values['address'], 16)
+                    # 确保数据类型格式正确
+                    data_type = values['data_type']
+                    if data_type not in ['int32', 'float', 'double']:
+                        self.logger.error(f"不支持的数据类型: {data_type}")
+                        if data_type == 'int':
+                            data_type = 'int32'
+                        elif data_type == 'string':
+                            self.statusBar().showMessage("不支持字符串类型", 3000)
+                            return
+
                     success, is_locked, lock_value = add_to_result_table(
                         self.result_table,
-                        addr=addr,
+                        address=addr,
                         desc=values['name'],
-                        value_type=values['data_type'],
+                        value_type=data_type,
                         initial_value=values['value'],
                         memory_reader=self.memory_reader,
                         logger=self.logger,
@@ -376,12 +480,20 @@ class GameCheater(QMainWindow):
 
     def clear_results(self):
         """清空结果表格"""
+        # 停止所有正在进行的搜索
+        searching_count = self.task_manager.get_searching_tasks_count()
+        if searching_count > 0:
+            self.task_manager.stop_all_searches()
+            self.logger.info(f"已停止 {searching_count} 个正在进行的搜索任务")
+
         self.result_table.setRowCount(0)
         self.locked_addresses.clear()
         self.statusBar().showMessage('已清空修改列表')
 
     def _on_result_item_changed(self, item):
         """处理结果表格的值改变事件"""
+        # 在try块外定义original_value_type变量
+        original_value_type = None
         try:
             row = item.row()
             col = item.column()
@@ -403,6 +515,9 @@ class GameCheater(QMainWindow):
             value_type = type_item.text()     # 获取类型
             value_text = value_item.text()    # 获取值
 
+            # 保存原始值类型，避免影响其他任务
+            original_value_type = self.memory_reader.current_value_type
+
             if col == 2:  # 数值列
                 try:
                     # 根据类型转换值并写入内存
@@ -411,12 +526,15 @@ class GameCheater(QMainWindow):
                         if value < 0:
                             value = value & 0xFFFFFFFF
                         buffer = value.to_bytes(4, 'little')
+                        self.memory_reader.current_value_type = 'int32'
                     elif value_type == '浮点':
                         value = float(value_text)
                         buffer = struct.pack('<f', value)
-                    else:  # 字符串
-                        value = value_text
-                        buffer = value.encode('utf-8')
+                        self.memory_reader.current_value_type = 'float'
+                    else:  # 双精度
+                        value = float(value_text)
+                        buffer = struct.pack('<d', value)
+                        self.memory_reader.current_value_type = 'double'
 
                     # 写入内存前检查进程是否还在运行
                     if not self.memory_reader.process_handle:
@@ -457,8 +575,8 @@ class GameCheater(QMainWindow):
                             value = int(value_text)
                         elif value_type == '浮点':
                             value = float(value_text)
-                        else:
-                            value = value_text
+                        else:  # 双精度
+                            value = float(value_text)
                         self.locked_addresses[addr] = value
                     except ValueError:
                         self.logger.error("无法锁定：无效的值")
@@ -473,18 +591,64 @@ class GameCheater(QMainWindow):
         except Exception as e:
             self.logger.error(f"处理值改变事件失败: {str(e)}")
             self.logger.debug(traceback.format_exc())
+        finally:
+            # 恢复原始值类型，避免影响其他任务
+            if original_value_type is not None:
+                self.memory_reader.current_value_type = original_value_type
 
     def _update_locked_values(self):
         """更新锁定的值"""
+        # 在try块外定义original_value_type变量
+        original_value_type = None
         try:
+            # 保存原始值类型，避免影响其他任务
+            original_value_type = self.memory_reader.current_value_type
+
             for addr, value in self.locked_addresses.items():
                 try:
                     if isinstance(value, int):
                         buffer = value.to_bytes(4, 'little', signed=True)
+                        self.memory_reader.current_value_type = 'int32'
                     elif isinstance(value, float):
-                        buffer = struct.pack('<f', value)
+                        # 查找该地址在结果表格中的类型
+                        is_double = False
+                        try:
+                            for row in range(self.result_table.rowCount()):
+                                addr_item = self.result_table.item(row, 1)
+                                if addr_item and int(addr_item.text(), 16) == addr:
+                                    type_item = self.result_table.item(row, 3)
+                                    if type_item and type_item.text() == '双精度':
+                                        is_double = True
+                                        self.logger.debug(f"检测到双精度浮点数: 地址={hex(addr)}, 值={value}")
+                                    break
+                        except Exception as e:
+                            self.logger.debug(f"检测双精度类型时出错: {str(e)}")
+                            # 默认使用单精度浮点数
+                            is_double = False
+
+                        try:
+                            if is_double:
+                                buffer = struct.pack('<d', value)
+                                self.memory_reader.current_value_type = 'double'
+                            else:
+                                buffer = struct.pack('<f', value)
+                                self.memory_reader.current_value_type = 'float'
+                        except struct.error as e:
+                            self.logger.debug(f"打包浮点数时出错: {str(e)}, 值={value}, 类型={'双精度' if is_double else '单精度'}")
+                            continue
                     else:
-                        buffer = value.encode('utf-8')
+                        self.logger.debug(f"不支持的值类型: {type(value)}, 地址={hex(addr)}")
+                        continue
+
+                    # 检查进程是否还在运行
+                    if not self.memory_reader.process_handle:
+                        self.logger.debug("进程未附加或已退出，无法更新锁定值")
+                        break
+
+                    # 写入内存前检查buffer是否有效
+                    if not buffer:
+                        self.logger.debug(f"无效的缓冲区: 地址={hex(addr)}, 值={value}")
+                        continue
 
                     if not self.memory_reader.write_memory(addr, buffer):
                         self.logger.debug(f"无法写入锁定地址: {hex(addr)}")
@@ -493,71 +657,114 @@ class GameCheater(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"更新锁定值时出错: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+        finally:
+            # 恢复原始值类型，避免影响其他任务
+            if original_value_type is not None:
+                self.memory_reader.current_value_type = original_value_type
 
     def _refresh_memory_table(self):
         """刷新内存表格显示"""
+        # 在try块外定义original_value_type变量
+        original_value_type = None
         try:
             current_task = self.task_manager.get_current_task()
             if not current_task or not current_task.memory_table:
                 return
 
-            for row in range(current_task.memory_table.rowCount()):
-                addr_item = current_task.memory_table.item(row, 0)
-                if not addr_item:
-                    continue
+            # 保存原始值类型，避免影响其他任务
+            original_value_type = self.memory_reader.current_value_type
 
-                addr = int(addr_item.text(), 16)
-                # 根据值类型决定读取大小
-                value_type = self.memory_reader.current_value_type
-                size = 8 if value_type == 'double' else 4
-                value = self.memory_reader.read_memory(addr, size)
+            try:
+                for row in range(current_task.memory_table.rowCount()):
+                    addr_item = current_task.memory_table.item(row, 0)
+                    if not addr_item:
+                        continue
 
-                if value:
-                    try:
-                        if value_type == 'int32':
-                            current_value = str(int.from_bytes(value, 'little', signed=True))
-                        elif value_type == 'float':
-                            current_value = f"{struct.unpack('<f', value)[0]:.6f}"
-                        else:  # double
-                            current_value = f"{struct.unpack('<d', value)[0]:.6f}"
+                    addr = int(addr_item.text(), 16)
+                    # 根据任务的值类型决定读取大小
+                    value_type = current_task.value_type
+                    if not value_type:
+                        value_type = 'int32'  # 默认为整数
 
-                        # 更新当前值
-                        current_item = current_task.memory_table.item(row, 1)
-                        if current_item:
-                            current_item.setText(current_value)
+                    size = 8 if value_type == 'double' else 4
 
-                        # 更新先前值（如果有）
-                        prev_value = current_task.prev_values.get(addr)
-                        prev_item = current_task.memory_table.item(row, 2)
-                        if prev_item:
-                            prev_item.setText(str(prev_value) if prev_value is not None else "-")
+                    # 临时设置memory_reader的值类型为当前任务的值类型
+                    self.memory_reader.current_value_type = value_type
 
-                        # 更新首次值（如果有）
-                        first_value = current_task.first_values.get(addr)
-                        first_item = current_task.memory_table.item(row, 3)
-                        if first_item:
-                            first_item.setText(str(first_value) if first_value is not None else "-")
+                    value = self.memory_reader.read_memory(addr, size)
 
-                        # 高亮显示变化的值
-                        if prev_value is not None and current_item:
+                    if value:
+                        try:
                             if value_type == 'int32':
-                                has_changed = int(current_value) != prev_value
-                            else:  # float or double
-                                has_changed = abs(float(current_value) - prev_value) > 1e-6
-                            if has_changed:
-                                current_item.setBackground(Qt.yellow)
-                            else:
-                                current_item.setBackground(Qt.white)
+                                current_value = str(int.from_bytes(value, 'little', signed=True))
+                            elif value_type == 'float':
+                                current_value = f"{struct.unpack('<f', value)[0]:.6f}"
+                            else:  # double
+                                current_value = f"{struct.unpack('<d', value)[0]:.6f}"
 
-                    except Exception as e:
-                        self.logger.debug(f"格式化值失败: {str(e)}")
+                            # 更新当前值
+                            current_item = current_task.memory_table.item(row, 1)
+                            if current_item:
+                                current_item.setText(current_value)
 
-        except Exception as e:
-            self.logger.error(f"刷新内存表格失败: {str(e)}")
+                            # 更新先前值（如果有）
+                            prev_value = current_task.prev_values.get(addr)
+                            prev_item = current_task.memory_table.item(row, 2)
+                            if prev_item:
+                                if prev_value is not None:
+                                    if value_type == 'int32':
+                                        prev_text = str(prev_value)
+                                    else:  # float or double
+                                        prev_text = f"{prev_value:.6f}"
+                                else:
+                                    prev_text = "-"
+                                prev_item.setText(prev_text)
+
+                            # 更新首次值（如果有）
+                            first_value = current_task.first_values.get(addr)
+                            first_item = current_task.memory_table.item(row, 3)
+                            if first_item:
+                                if first_value is not None:
+                                    if value_type == 'int32':
+                                        first_text = str(first_value)
+                                    else:  # float or double
+                                        first_text = f"{first_value:.6f}"
+                                else:
+                                    first_text = "-"
+                                first_item.setText(first_text)
+
+                            # 高亮显示变化的值
+                            if prev_value is not None and current_item:
+                                if value_type == 'int32':
+                                    has_changed = int(current_value) != prev_value
+                                else:  # float or double
+                                    has_changed = abs(float(current_value) - prev_value) > 1e-6
+                                if has_changed:
+                                    current_item.setBackground(Qt.yellow)
+                                else:
+                                    current_item.setBackground(Qt.white)
+
+                        except Exception as e:
+                            self.logger.debug(f"格式化值失败: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"刷新内存表格失败: {str(e)}")
+                import traceback
+                self.logger.debug(traceback.format_exc())
+        finally:
+            # 恢复原始值类型，避免影响其他任务
+            if original_value_type is not None:
+                self.memory_reader.current_value_type = original_value_type
 
     def _refresh_result_table(self):
         """刷新结果表格显示"""
+        # 在try块外定义original_value_type变量
+        original_value_type = None
         try:
+            # 保存原始值类型，避免影响其他任务
+            original_value_type = self.memory_reader.current_value_type
+
             for row in range(self.result_table.rowCount()):
                 addr_item = self.result_table.item(row, 1)
                 type_item = self.result_table.item(row, 3)
@@ -575,18 +782,21 @@ class GameCheater(QMainWindow):
                     try:
                         # 根据类型格式化锁定值
                         if value_type == '整数':
+                            self.memory_reader.current_value_type = 'int32'
                             buffer = int(locked_value).to_bytes(4, 'little', signed=True)
                             if not self.memory_reader.write_memory(addr, buffer):
                                 self.logger.debug(f"写入锁定值失败: {addr}")
                                 continue
                             current_value = str(locked_value)
                         elif value_type == '浮点':
+                            self.memory_reader.current_value_type = 'float'
                             buffer = struct.pack('<f', float(locked_value))
                             if not self.memory_reader.write_memory(addr, buffer):
                                 self.logger.debug(f"写入锁定值失败: {addr}")
                                 continue
                             current_value = f"{locked_value:.6f}"
                         elif value_type == '双精度':
+                            self.memory_reader.current_value_type = 'double'
                             buffer = struct.pack('<d', float(locked_value))
                             if not self.memory_reader.write_memory(addr, buffer):
                                 self.logger.debug(f"写入锁定值失败: {addr}")
@@ -600,6 +810,15 @@ class GameCheater(QMainWindow):
                 else:
                     # 读取内存值
                     size = 8 if value_type == '双精度' else 4
+
+                    # 设置正确的值类型
+                    if value_type == '整数':
+                        self.memory_reader.current_value_type = 'int32'
+                    elif value_type == '浮点':
+                        self.memory_reader.current_value_type = 'float'
+                    elif value_type == '双精度':
+                        self.memory_reader.current_value_type = 'double'
+
                     value = self.memory_reader.read_memory(addr, size)
                     if not value:
                         continue
@@ -628,12 +847,203 @@ class GameCheater(QMainWindow):
         except Exception as e:
             self.logger.error(f"刷新结果表格失败: {str(e)}")
             self.logger.debug(traceback.format_exc())
+        finally:
+            # 恢复原始值类型，避免影响其他任务
+            if original_value_type is not None:
+                self.memory_reader.current_value_type = original_value_type
 
     def show_status(self, message, log=True):
         """显示状态栏消息，可选择是否记录到日志"""
         self.statusBar().showMessage(message)
         if log:
             self.logger.info(message)
+        else:
+            # 即使不记录为info，也记录为debug，方便调试
+            self.logger.debug(f"状态栏: {message}")
+
+    def _on_add_address_clicked(self):
+        """添加地址按钮点击事件"""
+        # 在try块外定义original_value_type变量
+        original_value_type = None
+        try:
+            self.logger.info("开始添加地址操作")
+            dialog = AddressDialog(self)
+            if dialog.exec_() == QDialog.Accepted:
+                self.logger.debug("用户确认添加地址对话框")
+                try:
+                    address = dialog.get_address()
+                    value_type = dialog.get_value_type()
+                    description = dialog.get_description()
+                    auto_lock = dialog.get_auto_lock()
+
+                    self.logger.debug(f"对话框返回值: 地址={hex(address) if address else 'None'}, 类型={value_type}, 描述={description}, 自动锁定={auto_lock}")
+
+                    if not address:
+                        self.logger.warning("添加地址失败: 地址无效")
+                        self.statusBar().showMessage("地址无效", 3000)
+                        return
+
+                    # 检查进程是否还在运行
+                    if not self.memory_reader.process_handle:
+                        self.logger.warning("添加地址失败: 进程未附加或已退出")
+                        self.statusBar().showMessage("进程未附加或已退出", 3000)
+                        return
+                except Exception as e:
+                    self.logger.error(f"处理对话框返回值时出错: {str(e)}")
+                    import traceback
+                    self.logger.error(f"错误详情:\n{traceback.format_exc()}")
+                    self.statusBar().showMessage(f"添加地址失败: {str(e)}", 3000)
+                    return
+
+                # 保存原始值类型，避免影响其他任务
+                original_value_type = self.memory_reader.current_value_type
+                self.logger.debug(f"保存原始值类型: {original_value_type}")
+
+                try:
+                    # 验证数据类型
+                    if value_type not in ['int32', 'float', 'double']:
+                        self.logger.error(f"不支持的值类型: {value_type}")
+                        self.statusBar().showMessage(f"不支持的数据类型: {value_type}", 3000)
+                        return
+
+                    # 记录数据类型信息
+                    type_mapping = {
+                        'int32': '整数',
+                        'float': '浮点',
+                        'double': '双精度'
+                    }
+                    self.logger.debug(f"使用数据类型: {value_type} ({type_mapping.get(value_type, '未知')})")
+
+                    # 设置当前值类型
+                    self.memory_reader.current_value_type = value_type
+                    self.logger.debug(f"设置当前值类型为: {value_type}")
+
+                    # 读取当前值
+                    # self.logger.debug(f"尝试读取地址 {hex(address)} 的值")
+                    try:
+                        current_value = self.memory_reader.read_value(address)
+                        if current_value is None:
+                            self.logger.error(f"读取地址 {hex(address)} 的值失败")
+                            self.statusBar().showMessage("读取地址失败", 3000)
+                            return
+                        # self.logger.debug(f"成功读取地址 {hex(address)} 的值: {current_value}")
+                    except Exception as e:
+                        self.logger.error(f"读取地址 {hex(address)} 的值时出错: {str(e)}")
+                        import traceback
+                        self.logger.error(f"错误详情:\n{traceback.format_exc()}")
+                        self.statusBar().showMessage(f"读取地址失败: {str(e)}", 3000)
+                        return
+
+                    # 添加到结果表格
+                    # self.logger.debug(f"尝试添加地址 {hex(address)} 到结果表格")
+                    try:
+                        success, is_locked, lock_value = add_to_result_table(
+                            self.result_table,
+                            address=address,
+                            memory_reader=self.memory_reader,
+                            value_type=value_type,
+                            desc=description,
+                            auto_lock=auto_lock,
+                            logger=self.logger
+                        )
+
+                        if success:
+                            self.logger.info(f"成功添加地址 {hex(address)} 到结果表格")
+                            # 如果需要自动锁定
+                            if is_locked and lock_value is not None:
+                                try:
+                                    # 添加到锁定地址
+                                    self.locked_addresses[address] = lock_value
+                                    self.logger.debug(f"自动锁定地址: {hex(address)}, 值={lock_value}")
+                                except Exception as e:
+                                    self.logger.error(f"锁定地址时出错: {str(e)}")
+                                    # 继续执行，不要因为锁定失败而中断
+
+                            self.statusBar().showMessage(f"已添加地址 {hex(address)} 到修改列表", 3000)
+                        else:
+                            self.logger.warning(f"添加地址 {hex(address)} 到结果表格失败")
+                            self.statusBar().showMessage("添加地址失败", 3000)
+                    except Exception as e:
+                        self.logger.error(f"调用add_to_result_table函数时出错: {str(e)}")
+                        import traceback
+                        self.logger.error(f"错误详情:\n{traceback.format_exc()}")
+                        self.statusBar().showMessage(f"添加地址失败: {str(e)}", 3000)
+                except Exception as e:
+                    self.logger.error(f"添加地址时出错: {str(e)}")
+                    import traceback
+                    self.logger.error(f"错误详情:\n{traceback.format_exc()}")
+                    self.statusBar().showMessage(f"添加地址失败: {str(e)}", 3000)
+                finally:
+                    # 恢复原始值类型，避免影响其他任务
+                    try:
+                        if original_value_type is not None:
+                            self.memory_reader.current_value_type = original_value_type
+                            self.logger.debug(f"恢复原始值类型: {original_value_type}")
+                    except Exception as e:
+                        self.logger.error(f"恢复原始值类型时出错: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"添加地址按钮点击事件处理失败: {str(e)}")
+            import traceback
+            self.logger.error(f"错误详情:\n{traceback.format_exc()}")
+            self.statusBar().showMessage("添加地址失败", 3000)
+
+    def _on_search_progress(self, message, log=False):
+        """搜索进度回调"""
+        try:
+            # 更新状态栏
+            self.statusBar().showMessage(message, 0)
+
+            # 只有当log参数为True时才记录日志
+            if log:
+                self.logger.info(message)
+
+            # 处理事件队列，保持UI响应
+            QCoreApplication.processEvents()
+        except Exception as e:
+            self.logger.error(f"处理搜索进度回调失败: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+
+    def _on_search_finished(self, results):
+        """搜索完成回调"""
+        try:
+            # 获取当前活动的任务
+            current_task = self.task_manager.get_current_task()
+            if current_task:
+                # 更新任务标签显示结果数量
+                current_index = self.task_manager.currentIndex()
+                new_tab_text = f"{current_task.display_name} ({len(results)})"
+                self.task_manager.setTabText(current_index, new_tab_text)
+
+                # 记录日志
+                self.logger.info(f"搜索完成: 任务={current_task.display_name}, 结果数量={len(results)}")
+
+            # 重新启用搜索按钮
+            self.search_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+        except Exception as e:
+            self.logger.error(f"处理搜索完成回调失败: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            # 确保按钮被重新启用
+            self.search_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+
+    def _on_stop_clicked(self):
+        """停止按钮点击事件"""
+        try:
+            if hasattr(self, 'search_thread') and self.search_thread:
+                self.logger.info("用户请求停止搜索")
+                self.search_thread.stop()
+                self.status_bar.showMessage("搜索已停止", 3000)
+
+                # 重新启用搜索按钮
+                self.search_button.setEnabled(True)
+                self.stop_button.setEnabled(False)
+        except Exception as e:
+            self.logger.error(f"停止搜索失败: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
 
 if __name__ == '__main__':
     try:
