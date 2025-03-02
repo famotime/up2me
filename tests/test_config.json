@@ -11,6 +11,24 @@
             "name": "测试地址2",
             "value": "3.14",
             "type": "浮点"
+        },
+        {
+            "address": "0x11223344",
+            "name": "测试地址3",
+            "value": "3.1415926535",
+            "type": "双精度"
+        },
+        {
+            "address": "0x55667788",
+            "name": "生命值",
+            "value": "1000",
+            "type": "整数"
+        },
+        {
+            "address": "0x99AABBCC",
+            "name": "坐标X",
+            "value": "123.456",
+            "type": "浮点"
         }
     ],
     "test_search_values": [
@@ -21,8 +39,92 @@
         },
         {
             "value": "3.14",
-            "type": "浮点",
+            "type": "浮点数",
             "compare": "大于"
+        },
+        {
+            "value": "3.1415926535",
+            "type": "双精度",
+            "compare": "等于"
+        },
+        {
+            "value": "500",
+            "type": "整数",
+            "compare": "小于"
+        },
+        {
+            "value": "1.0",
+            "type": "浮点数",
+            "compare": "已改变"
         }
-    ]
+    ],
+    "performance_test_data": {
+        "memory_sizes": [4, 16, 64, 256, 1024, 4096],
+        "search_sequences": [
+            [
+                {
+                    "value": "100",
+                    "type": "整数",
+                    "compare": "等于"
+                },
+                {
+                    "value": "101",
+                    "type": "整数",
+                    "compare": "大于"
+                },
+                {
+                    "value": "200",
+                    "type": "整数",
+                    "compare": "小于"
+                }
+            ],
+            [
+                {
+                    "value": "3.14159",
+                    "type": "浮点数",
+                    "compare": "等于"
+                },
+                {
+                    "value": "3.14160",
+                    "type": "浮点数",
+                    "compare": "大于"
+                },
+                {
+                    "value": "3.14158",
+                    "type": "浮点数",
+                    "compare": "小于"
+                }
+            ],
+            [
+                {
+                    "value": "3.1415926535",
+                    "type": "双精度",
+                    "compare": "等于"
+                },
+                {
+                    "value": "3.1415926536",
+                    "type": "双精度",
+                    "compare": "大于"
+                },
+                {
+                    "value": "3.1415926534",
+                    "type": "双精度",
+                    "compare": "小于"
+                }
+            ]
+        ]
+    },
+    "ui_test_data": {
+        "button_texts": ["搜索", "添加", "删除", "清空", "新建"],
+        "input_values": ["100", "200", "300", "3.14", "3.1415926535"],
+        "ui_operations": [
+            "刷新进程列表",
+            "切换值类型",
+            "切换比较模式",
+            "输入搜索值",
+            "清空搜索值",
+            "创建新任务",
+            "切换任务"
+        ]
+    }
 }
