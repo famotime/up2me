@@ -61,6 +61,9 @@ class GameCheater(QMainWindow):
         # 初始化任务管理器
         self.task_manager = SearchTaskManager()
 
+        # 连接任务切换信号到自定义处理函数
+        self.task_manager.currentChanged.connect(self._on_task_changed)
+
         # 将任务列表赋值给memory_reader
         self.memory_reader.active_tasks = self.task_manager.tasks
 
@@ -78,6 +81,32 @@ class GameCheater(QMainWindow):
 
         # 添加事件处理
         self.result_table.itemChanged.connect(self._on_result_item_changed)
+
+    def _on_task_changed(self, index):
+        """处理任务切换事件"""
+        self.logger.debug(f"任务切换事件: 索引 {index}")
+
+        # 获取当前任务
+        current_task = self.task_manager.get_current_task()
+        if current_task and current_task.value_type:
+            self.logger.debug(f"当前任务值类型: {current_task.value_type}")
+
+            # 将任务的值类型映射到下拉菜单选项
+            value_type_map = {
+                "int32": "整数",
+                "float": "浮点数",
+                "double": "双精度"
+            }
+            combo_text = value_type_map.get(current_task.value_type, "整数")
+            self.logger.debug(f"映射后的下拉菜单文本: {combo_text}")
+
+            # 设置下拉菜单值
+            self.type_combo.setCurrentText(combo_text)
+            self.logger.debug(f"设置下拉菜单文本为: {combo_text}")
+
+            # 验证设置是否成功
+            new_text = self.type_combo.currentText()
+            self.logger.debug(f"设置后的下拉菜单文本: {new_text}")
 
     def _setup_ui(self):
         """设置UI布局"""

@@ -170,10 +170,12 @@ class SearchTaskManager(QTabWidget):
         """处理标签页切换事件"""
         if 0 <= index < len(self.tasks):
             current_task = self.tasks[index]
+            self.logger.debug(f"切换到任务: {current_task.name}, 索引: {index}")
 
             # 确保显示正确的标签文本
             if hasattr(current_task, 'display_name'):
                 self.setTabText(index, current_task.display_name)
+                self.logger.debug(f"设置标签文本: {current_task.display_name}")
 
             # 确保当前任务的内存表格显示正确的数据
             if current_task.memory_table and current_task.search_results:

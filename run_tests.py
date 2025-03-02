@@ -1,5 +1,6 @@
 import sys
 import os
+import unittest
 from pathlib import Path
 
 # 添加项目根目录到Python路径
@@ -9,15 +10,28 @@ sys.path.append(str(project_root))
 # 运行测试
 if __name__ == '__main__':
     try:
+        print("=" * 50)
+        print("开始运行游戏修改器自动化测试")
+        print("=" * 50)
+        print()
+
         # 检查是否以管理员权限运行
         import ctypes
         # if not ctypes.windll.shell32.IsUserAnAdmin():
         #     print("请以管理员权限运行测试！")
         #     sys.exit(1)
 
-        # 导入并运行测试
-        from tests.test_game_cheater import run_tests
-        run_tests()
+        # 使用TestLoader发现并运行所有测试
+        loader = unittest.TestLoader()
+        test_dir = project_root / 'tests'
+        suite = loader.discover(str(test_dir), pattern='test_*.py')
+
+        # 运行测试
+        runner = unittest.TextTestRunner(verbosity=2)
+        runner.run(suite)
+
+        print()
+        print("所有测试执行完成")
 
     except ImportError as e:
         print(f"导入错误: {e}")
